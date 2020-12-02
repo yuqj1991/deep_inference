@@ -48,8 +48,13 @@ namespace BrixLab
     }
 
     template<typename DType>
-    void NetGraph<DType>::make_graph(const std::string modelFile){
+    void NetGraph<DType>::make_graph(const layerWeightsParam *params, const int layer_size){
 
+    }
+
+    template<typename DType>
+    void NetGraph<DType>::make_netParamfromTflite(const std::string &tflite_file){
+        
     }
 
 } // namespace BrixLab

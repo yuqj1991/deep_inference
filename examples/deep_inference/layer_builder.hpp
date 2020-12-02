@@ -614,12 +614,10 @@ namespace BrixLab
         layerNode<DType> *getGraphOutput();
         NetGraph(const int &inH, const int &inW, const int &size);
         ~NetGraph();
-        static engine graph_eng;
-        static stream graph_stream;
 
         void network_predict();
-
-        void make_graph(const std::string modelFile);
+        void make_netParamfromTflite(const std::string &tflite_file);
+        void make_graph(const layerWeightsParam *params, const int &layer_size);
         private:
         int input_w;
         int input_h;
