@@ -3,7 +3,7 @@
 
 #include "utils.hpp"
 #include "schema_generated.h"
-
+#include "logkit.hpp"
 namespace BrixLab
 {
     enum DataType {
@@ -47,6 +47,30 @@ namespace BrixLab
         NONEED(tflite::BuiltinOperator_SOFTMAX);
         return true;
     }
+
+    template<typename DType>
+    bool convertDataFormatTflite(const DType* src, DType* dst, int KH, int KW, int CI, int CO) {
+        LOG_CHECK(KH > 0, "KH>0");
+        LOG_CHECK(KW > 0, "KW>0");
+        LOG_CHECK(CI > 0, "KI>0");
+        LOG_CHECK(CO > 0, "KO>0");
+        LOG_CHECK(src != nullptr, "src != nullptr");
+        // CO KH KW CI --> CO CI KH KW
+        for (int oc = 0; oc < CO; ++oc) {
+            for (int ic = 0; ic < CI; ++ic) {
+                for (int h = 0; h < KH; ++h) {
+                    for (int w = 0; w < KW; ++w) {
+                        dst[(oc * CI + ic) * KH * KW + h * KW + w] = src[(oc * KH + h) * KW * CI + w * CI + ic];
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
+    #define ARGSMAX(a, b) ((a) >= (b) ? (a): (b))
+    #define ARGSMIN(a, b) ((a) >= (b) ? (b): (a))
 
 } // namespace BrixLab
 

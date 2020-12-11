@@ -11,9 +11,6 @@ int main(){
     int inWidth = 14;
     std::vector<float> inData(inBatch*inChannel*inHeight*inWidth);
     float * data = inData.data();
-    BrixLab::Test_Convulution(data);
-    
-    LOG(DEBUG_INFO, "test_LOG") <<" 123 ";
-    LOG_CHECK(1>2, "test_CHECK")<< "1 should be less than 2";
+    BrixLab::Test_Deconvulution(data);
     return 0;
 }

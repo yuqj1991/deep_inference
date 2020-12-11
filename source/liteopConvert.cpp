@@ -2,9 +2,11 @@
 
 using namespace BrixLab;
 
-liteOpConvertMapKit* liteOpConvertMapKit::_uniqueSuit = nullptr;
+template<typename DType>
+liteOpConvertMapKit<DType>* liteOpConvertMapKit<DType>::_uniqueSuit = nullptr;
 
-liteOpConverter* liteOpConvertMapKit::search(const tflite::BuiltinOperator opIndex) {
+template<typename DType>
+liteOpConverter<DType>* liteOpConvertMapKit<DType>::search(const tflite::BuiltinOperator opIndex) {
     auto iter = _liteOpConverters.find(opIndex);
     if (iter == _liteOpConverters.end()) {
         return nullptr;
@@ -12,21 +14,27 @@ liteOpConverter* liteOpConvertMapKit::search(const tflite::BuiltinOperator opInd
     return iter->second;
 }
 
-liteOpConvertMapKit* liteOpConvertMapKit::get() {
+template<typename DType>
+liteOpConvertMapKit<DType>* liteOpConvertMapKit<DType>::get() {
     if (_uniqueSuit == nullptr) {
         _uniqueSuit = new liteOpConvertMapKit;
     }
     return _uniqueSuit;
 }
 
-liteOpConvertMapKit::~liteOpConvertMapKit() {
+template<typename DType>
+liteOpConvertMapKit<DType>::~liteOpConvertMapKit() {
     for (auto& it : _liteOpConverters) {
         delete it.second;
     }
     _liteOpConverters.clear();
 }
 
-void liteOpConvertMapKit::insert(liteOpConverter* t, tflite::BuiltinOperator opIndex) {
+template<typename DType>
+void liteOpConvertMapKit<DType>::insert(liteOpConverter<DType>* t, tflite::BuiltinOperator opIndex) {
     _liteOpConverters.insert(std::make_pair(opIndex, t));
 }
+
+template class liteOpConvertMapKit<float>;
+template class liteOpConvertMapKit<uint8_t>;
 

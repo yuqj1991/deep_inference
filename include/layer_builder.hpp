@@ -31,48 +31,48 @@ namespace BrixLab
     using tag = memory::format_tag;
     using dt = memory::data_type;
     
-    void OP_convolution_inference_forward(layerNode<float> &node, graphSet<float> &g_net);
+    void OP_convolution_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
     
     layerNode<float> OP_convolution_layer_setup(const layerWeightsParam<float> &param);
     
 
     
-    void OP_batchnorm_inference_forward(layerNode<float> &node, graphSet<float> &g_net);
+    void OP_batchnorm_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
     
     layerNode<float> OP_batchnorm_layer_setup(const layerWeightsParam<float> &param);
 
     
-    void OP_pooling_inference_forward(layerNode<float> &node, graphSet<float> &g_net);
+    void OP_pooling_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
     
     layerNode<float> OP_pooling_layer_setup(const layerWeightsParam<float> &param);
 
     
-    void OP_concat_inference_forward(layerNode<float> &node, graphSet<float> &g_net);
+    void OP_concat_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
     
     layerNode<float> OP_concat_layer_setup(const layerWeightsParam<float> &param);
 
     
-    void OP_sum_inference_forward(layerNode<float> &node, graphSet<float> &g_net);
+    void OP_sum_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
     
     layerNode<float> OP_sum_layer_setup(const layerWeightsParam<float> &param);
 
     
-    void OP_resample_inference_forward(layerNode<float> &node, graphSet<float> &g_net);
+    void OP_resample_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
     
     layerNode<float> OP_resample_layer_setup(const layerWeightsParam<float> &param);
 
     
-    void OP_deconvolution_inference_forward(layerNode<float> &node, graphSet<float> &g_net);
+    void OP_deconvolution_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
     
     layerNode<float> OP_deconvolution_layer_setup(const layerWeightsParam<float> &param);
 
     
-    void OP_innerproduct_inference_forward(layerNode<float> &node, graphSet<float> &g_net);
+    void OP_innerproduct_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
     
     layerNode<float> OP_innerproduct_layer_setup(const layerWeightsParam<float> &param);
 
     
-    void OP_activation_inference_forward(layerNode<float> &node, graphSet<float> &g_net);
+    void OP_activation_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
     
     layerNode<float> OP_activation_layer_setup(const layerWeightsParam<float> &param);
 

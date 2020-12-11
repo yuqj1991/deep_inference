@@ -2,23 +2,22 @@
 #include <assert.h>
 namespace BrixLab
 {
-    void OP_convolution_inference_forward(layerNode<float> &node, graphSet<float> &g_net){
-        node.src_bottom_memory = g_net.input;
-        if (node.convolution_pdesc.src_desc() != node.src_bottom_memory.get_desc()) {
-            auto temp_memory = memory(node.convolution_pdesc.src_desc(), BrixLab::graph_eng);
-            assert(temp_memory.get_data_handle() != nullptr);
-            std::unordered_map<int, memory> op_arg = {{DNNL_ARG_FROM, node.src_bottom_memory},
+    void OP_convolution_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
+        node->src_bottom_memory = g_net.input;
+        if (node->conv_pdesc.src_desc() != node->src_bottom_memory.get_desc()) {
+            auto temp_memory = memory(node->conv_pdesc.src_desc(), BrixLab::graph_eng);
+            LOG_CHECK(temp_memory.get_data_handle() != nullptr, "varilfy the empty pointer") << "temp_memory.get_data_handle() should not be nullptr";
+            std::unordered_map<int, memory> op_arg = {{DNNL_ARG_FROM, node->src_bottom_memory},
                                                       {DNNL_ARG_TO, temp_memory}};
-            printf("[%s] reorder bottom memory! \n", __FUNCTION__);
-            reorder(node.src_bottom_memory, temp_memory).execute(BrixLab::graph_stream, op_arg);
-            node.src_bottom_memory = temp_memory;
+            reorder(node->src_bottom_memory, temp_memory).execute(BrixLab::graph_stream, op_arg);
+            node->src_bottom_memory = temp_memory;
         }
-        node.op_args = {{DNNL_ARG_SRC, node.src_bottom_memory},
-                        {DNNL_ARG_WEIGHTS, node.src_weights_memory},
-                        {DNNL_ARG_BIAS, node.src_bias_memory},
-                        {DNNL_ARG_DST, node.layer_top_memory}};
-        convolution_forward(node.convolution_pdesc).execute(BrixLab::graph_stream, node.op_args);
-        printf("[%s] done!\n", __FUNCTION__);
+        node->op_args = {{DNNL_ARG_SRC, node->src_bottom_memory},
+                        {DNNL_ARG_WEIGHTS, node->src_weights_memory},
+                        {DNNL_ARG_BIAS, node->src_bias_memory},
+                        {DNNL_ARG_DST, node->layer_top_memory}};
+        convolution_forward(node->conv_pdesc).execute(BrixLab::graph_stream, node->op_args);
+        LOG(DEBUG_INFO, "test_convolution_finished")<<"done!";
     }
         
     layerNode<float> OP_convolution_layer_setup(const layerWeightsParam<float> &param){
@@ -26,13 +25,31 @@ namespace BrixLab
         int k_w = param.k_w;
         int k_h = param.k_h;
         int k_c = param.k_c;
-        int k_s = param.strides;
-        int k_pad = param.padding;
+        int k_sX = param.stridesX;
+        int k_sY = param.stridesY;
+        int k_padXL = 0;
+        int k_padXR = 0;
+        int k_padYT = 0;
+        int k_padYB = 0;
         int data_formate = param.formate;
         int inHeight = param.inHeight;
         int inChannel = param.inChannel;
         int inWidth = param.inWidth;
         int inBatch = param.inBatch;
+        node.dilateX = param.dilateX;
+        node.dilateY = param.dilateY;
+        int outWidth = floor((inWidth - (1 + (k_w - 1) * (node.dilateX + 1)) + k_padXL + k_padXR) / k_sX) + 1;
+        int outHeight = floor((inHeight - ((1 + (k_h - 1) * (node.dilateX + 1))) + k_padYB + k_padYT) / k_sY) + 1; 
+        if(param.mpad == PaddingType::PaddingSAME){
+            outHeight    = std::ceil((inHeight) / k_sY); // oh = ceil(ih / stride)
+            outWidth    = std::ceil((inWidth) / k_sX); // ow = ceil(iw / stride)
+            int pad_width = ARGSMAX(0, ((outWidth - 1) * k_sX + ((k_w - 1) * (node.dilateX + 1) + 1) - inWidth) / 2);
+            int pad_height = ARGSMAX(0, ((outHeight - 1) * k_sY + ((k_h - 1) * (node.dilateY + 1) + 1) - inHeight) / 2);
+            k_padYT = std::floor(pad_height / 2);
+            k_padXL = std::floor(pad_width / 2);
+            k_padYB = pad_height - k_padXL;
+            k_padXR = pad_width - k_padXR;
+        }
         node.hasBias = param.hasBias;
         node.bottom_shape = {inBatch, inChannel, inHeight, inWidth};
         node.groups = param.groups >= 1 ? param.groups : 1;
@@ -45,14 +62,15 @@ namespace BrixLab
         }else if(node.groups == 1){
             node.weights_shape = {k_c, inChannel, k_h, k_w};
         }
-        node.conv_strides = {k_s, k_s};
-        node.conv_padding = {k_pad, k_pad};
-        node.dialited_rate = param.dialited_rate;
+        node.conv_strides = {k_sY, k_sX};
+        node.conv_paddingL = {k_padYT, k_padXL};
+        node.conv_paddingR = {k_padYB, k_padXR};
+        
         if(node.hasBias)
             node.bias_shape = {k_c};
         
         // src bottom_md
-        node.src_bottom_md = memory::desc({node.bottom_shape}, dt::f32, tag::any);
+        node.src_bottom_md = memory::desc({node.bottom_shape}, dt::f32, tag::nchw);
         // weights & bias
         node.src_weights_md = memory::desc({node.weights_shape}, dt::f32, tag::any);
         node.src_weights_memory = memory({{node.weights_shape}, dt::f32, tag::oihw}, BrixLab::graph_eng);
@@ -63,8 +81,7 @@ namespace BrixLab
             write_to_dnnl_memory(param.conv_bias, node.src_bias_memory);
         }
         // output feature shape
-        int outWidth = floor((inWidth - (1 + (k_w - 1) * (node.dialited_rate + 1)) + 2 * k_pad) / k_s) + 1;
-        int outHeight = floor((inHeight - ((1 + (k_h - 1) * (node.dialited_rate + 1))) + 2 * k_pad) / k_s) + 1;
+        
         node.top_shape = {inBatch, k_c, outHeight, outWidth};
         node.layer_top_md = memory::desc({node.top_shape}, dt::f32, tag::any);
         node.layer_h = outHeight;
@@ -72,57 +89,57 @@ namespace BrixLab
         node.layer_w = outWidth;
         node.layer_n = inBatch;
         printf("[%s][line %d]layer info: outWidth: %d, outHeight: %d\n",__FUNCTION__, __LINE__, outWidth, outHeight);
-        
-        if(node.dialited_rate == 0){ 
+        int dilate = ARGSMAX(node.dilateX, node.dilateY);
+        if(dilate == 0){ 
             if(node.hasBias){
                 auto convolution_desc = convolution_forward::desc(prop_kind::forward_inference,
                                         algorithm::convolution_direct, node.src_bottom_md, node.src_weights_md,
                                         node.src_bias_md, node.layer_top_md, node.conv_strides, 
-                                        node.conv_padding, node.conv_padding);
-                node.convolution_pdesc = convolution_forward::primitive_desc(convolution_desc, BrixLab::graph_eng);
+                                        node.conv_paddingL, node.conv_paddingR);
+                node.conv_pdesc = convolution_forward::primitive_desc(convolution_desc, BrixLab::graph_eng);
                 printf("[%s][line %d] \n", __FUNCTION__, __LINE__);
             }else{
                 auto convolution_desc = convolution_forward::desc(prop_kind::forward_inference, 
                                         algorithm::convolution_direct, node.src_bottom_md, 
                                         node.src_weights_md, node.layer_top_md, 
-                                        node.conv_strides, node.conv_padding, node.conv_padding);
-                node.convolution_pdesc = convolution_forward::primitive_desc(convolution_desc, BrixLab::graph_eng);
+                                        node.conv_strides, node.conv_paddingL, node.conv_paddingR);
+                node.conv_pdesc = convolution_forward::primitive_desc(convolution_desc, BrixLab::graph_eng);
             }
             
-        }else if(node.dialited_rate >= 1){
-            memory::dims conv_dilates = {node.dialited_rate, node.dialited_rate};
+        }else if(dilate >= 1){
+            memory::dims conv_dilates = {node.dilateX, node.dilateX};
             if(node.hasBias){
                 auto convolution_desc = convolution_forward::desc(prop_kind::forward_inference,
                                           algorithm::convolution_direct,node.src_bottom_md, node.src_weights_md,
                                           node.src_bias_md, node.layer_top_md, node.conv_strides, conv_dilates,
-                                          node.conv_padding, node.conv_padding);
-                node.convolution_pdesc = convolution_forward::primitive_desc(convolution_desc, BrixLab::graph_eng);
+                                          node.conv_paddingL, node.conv_paddingR);
+                node.conv_pdesc = convolution_forward::primitive_desc(convolution_desc, BrixLab::graph_eng);
             }else{
                 auto convolution_desc = convolution_forward::desc(prop_kind::forward_inference,
                                           algorithm::convolution_direct,node.src_bottom_md, node.src_weights_md,
                                           node.layer_top_md, node.conv_strides, conv_dilates,
-                                          node.conv_padding, node.conv_padding);
-                node.convolution_pdesc = convolution_forward::primitive_desc(convolution_desc, BrixLab::graph_eng);
+                                          node.conv_paddingL, node.conv_paddingR);
+                node.conv_pdesc = convolution_forward::primitive_desc(convolution_desc, BrixLab::graph_eng);
             }
             
         }
 
-        if (node.convolution_pdesc.weights_desc() != node.src_weights_memory.get_desc()) {
-            auto temp_memory = memory(node.convolution_pdesc.weights_desc(), BrixLab::graph_eng);
+        if (node.conv_pdesc.weights_desc() != node.src_weights_memory.get_desc()) {
+            auto temp_memory = memory(node.conv_pdesc.weights_desc(), BrixLab::graph_eng);
             reorder(node.src_weights_memory, temp_memory)
                     .execute(BrixLab::graph_stream, node.src_weights_memory, temp_memory);
             node.src_weights_memory = temp_memory;
         }
 
-        node.layer_top_memory = memory(node.convolution_pdesc.dst_desc(), BrixLab::graph_eng);
+        node.layer_top_memory = memory(node.conv_pdesc.dst_desc(), BrixLab::graph_eng);
         node.inference_forward = OP_convolution_inference_forward; 
         return node;
     }
     
     
-    void OP_batchnorm_inference_forward(layerNode<float> &node, graphSet<float> &g_net){
-        node.src_bottom_memory = g_net.input;
-        batch_normalization_forward(node.batchnorm_pdesc).execute(BrixLab::graph_stream, node.op_args);
+    void OP_batchnorm_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
+        node->src_bottom_memory = g_net.input;
+        batch_normalization_forward(node->batchnorm_pdesc).execute(BrixLab::graph_stream, node->op_args);
     }
         
     layerNode<float> OP_batchnorm_layer_setup(const layerWeightsParam<float> &param){
@@ -175,12 +192,12 @@ namespace BrixLab
     }
 
        
-    void OP_pooling_inference_forward(layerNode<float> &node, graphSet<float> &g_net){
-         node.src_bottom_memory = g_net.input;
-        if(node.p_dialiated == 0){
-            pooling_forward(node.pooling_pdesc_without_d).execute(BrixLab::graph_stream, node.op_args);
-        }else if(node.p_dialiated >= 1){
-            pooling_v2_forward(node.pooling_pdesc).execute(BrixLab::graph_stream, node.op_args);
+    void OP_pooling_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
+         node->src_bottom_memory = g_net.input;
+        if(node->p_dialiated == 0){
+            pooling_forward(node->pooling_pdesc_without_d).execute(BrixLab::graph_stream, node->op_args);
+        }else if(node->p_dialiated >= 1){
+            pooling_v2_forward(node->pooling_pdesc).execute(BrixLab::graph_stream, node->op_args);
         }
     }
         
@@ -245,8 +262,8 @@ namespace BrixLab
     }
 
         
-    void OP_concat_inference_forward(layerNode<float> &node, graphSet<float> &g_net){
-        concat(node.concat_pdesc).execute(BrixLab::graph_stream, node.op_args);
+    void OP_concat_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
+        concat(node->concat_pdesc).execute(BrixLab::graph_stream, node->op_args);
     }
 
         
@@ -277,8 +294,8 @@ namespace BrixLab
     }
 
         
-    void OP_sum_inference_forward(layerNode<float> &node, graphSet<float> &g_net){
-        sum(node.sum_pdesc).execute(BrixLab::graph_stream, node.op_args);
+    void OP_sum_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
+        sum(node->sum_pdesc).execute(BrixLab::graph_stream, node->op_args);
     }
 
         
@@ -312,9 +329,9 @@ namespace BrixLab
         return node;*/
     }
     
-    void OP_resample_inference_forward(layerNode<float> &node, graphSet<float> &g_net){
-        node.src_bottom_memory = g_net.input;
-        resampling_forward(node.resample_pdesc).execute(BrixLab::graph_stream, node.op_args);
+    void OP_resample_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
+        node->src_bottom_memory = g_net.input;
+        resampling_forward(node->resample_pdesc).execute(BrixLab::graph_stream, node->op_args);
     }
     
     layerNode<float> OP_resample_layer_setup(const layerWeightsParam<float> &param){
@@ -343,22 +360,22 @@ namespace BrixLab
         return node;
     }
     
-    void OP_deconvolution_inference_forward(layerNode<float> &node, graphSet<float> &g_net){
-        node.src_bottom_memory = g_net.input;
+    void OP_deconvolution_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
+        node->src_bottom_memory = g_net.input;
         
-        if (node.deconv_pdesc.src_desc() != node.src_bottom_memory.get_desc()) {
-            auto temp_memory = memory(node.deconv_pdesc.src_desc(), BrixLab::graph_eng);
-            std::unordered_map<int, memory> op_arg = {{DNNL_ARG_FROM, node.src_bottom_memory},
+        if (node->deconv_pdesc.src_desc() != node->src_bottom_memory.get_desc()) {
+            auto temp_memory = memory(node->deconv_pdesc.src_desc(), BrixLab::graph_eng);
+            std::unordered_map<int, memory> op_arg = {{DNNL_ARG_FROM, node->src_bottom_memory},
                     {DNNL_ARG_TO, temp_memory}};
-            reorder(node.src_bottom_memory, temp_memory).execute(BrixLab::graph_stream, op_arg);
-            node.src_bottom_memory = temp_memory;
+            reorder(node->src_bottom_memory, temp_memory).execute(BrixLab::graph_stream, op_arg);
+            node->src_bottom_memory = temp_memory;
             printf("[OP_deconvolution_inference_forward] reorder bottom memory! \n");
         }
-        node.op_args = {{DNNL_ARG_SRC, node.src_bottom_memory},
-                        {DNNL_ARG_WEIGHTS, node.src_weights_memory},
-                        {DNNL_ARG_BIAS, node.src_bias_memory},
-                        {DNNL_ARG_DST, node.layer_top_memory}};
-        deconvolution_forward(node.deconv_pdesc).execute(BrixLab::graph_stream, node.op_args);
+        node->op_args = {{DNNL_ARG_SRC, node->src_bottom_memory},
+                        {DNNL_ARG_WEIGHTS, node->src_weights_memory},
+                        {DNNL_ARG_BIAS, node->src_bias_memory},
+                        {DNNL_ARG_DST, node->layer_top_memory}};
+        deconvolution_forward(node->deconv_pdesc).execute(BrixLab::graph_stream, node->op_args);
         printf("[OP_deconvolution_inference_forward] done!\n");
     }    
 
@@ -368,8 +385,12 @@ namespace BrixLab
         int k_w = param.k_w;
         int k_h = param.k_h;
         int k_c = param.k_c;
-        int k_s = param.strides;
-        int k_pad = param.padding;
+        int k_sX = param.stridesX;
+        int k_sY = param.stridesY;
+        int k_padXL = 0;
+        int k_padXR = 0;
+        int k_padYT = 0;
+        int k_padYB = 0;
         int data_formate = param.formate;
         int inHeight = param.inHeight;
         int inChannel = param.inChannel;
@@ -378,11 +399,13 @@ namespace BrixLab
         
         node.bottom_shape = {inBatch, inChannel, inHeight, inWidth};
         node.weights_shape = {k_c, inChannel, k_w, k_h};
-        node.deconv_strides = {k_s, k_s};
-        node.deconv_padding = {k_pad, k_pad};
-        node.dedialited_rate = param.dialited_rate;
-        node.hasdeBias = param.hasBias;
-        if(node.hasdeBias)
+        node.deconv_strides = {k_sX, k_sY};
+        node.deconv_paddingL = {k_padYT, k_padXL};
+        node.deconv_paddingL = {k_padYB, k_padXR};
+        node.dilateX = param.dilateX;
+        node.dilateY = param.dilateY;
+        node.hasBias = param.hasBias;
+        if(node.hasBias)
             node.bias_shape = {k_c};
         // src bottom data
         node.src_bottom_md = memory::desc({node.bottom_shape}, dt::f32, tag::any);
@@ -391,17 +414,17 @@ namespace BrixLab
         printf("start to writo to memory!\n");
         write_to_dnnl_memory(param.transposed_weights, node.src_weights_memory);
         node.src_weights_md = memory::desc({node.weights_shape}, dt::f32, tag::any);
-        if(node.hasdeBias){
+        if(node.hasBias){
             node.src_bias_memory = memory({{node.bias_shape}, dt::f32, tag::x}, BrixLab::graph_eng);
             write_to_dnnl_memory(param.transposed_bias, node.src_bias_memory);
             node.src_bias_md = memory::desc({node.bias_shape}, dt::f32, tag::any);
         }
 
-        int D_kHeight = 1 + (k_h -  1) * (node.dedialited_rate + 1);
-        int D_kWidth = 1 + (k_w - 1) * (node.dedialited_rate + 1);
+        int D_kHeight = 1 + (k_h -  1) * (node.dilateX + 1);
+        int D_kWidth = 1 + (k_w - 1) * (node.dilateY + 1);
 
-        int outWidth = int((inWidth - 1) * k_s + D_kWidth - 2 * k_pad);
-        int outHeight = int((inHeight - 1) * k_s + D_kHeight - 2 * k_pad);
+        int outWidth = int((inWidth - 1) * k_sX + D_kWidth - (k_padXL + k_padXR));
+        int outHeight = int((inHeight - 1) * k_sY + D_kHeight - (k_padYT + k_padYB));
         node.top_shape = {inBatch, k_c, outHeight, outWidth};
 
         node.layer_c = k_c;
@@ -410,14 +433,15 @@ namespace BrixLab
         node.layer_w = outWidth;
 
         node.layer_top_md = memory::desc({node.top_shape}, dt::f32, tag::nchw);
-        if(node.dedialited_rate > 0){
-            memory::dims deconv_deliatd = {node.dedialited_rate, node.dedialited_rate};
-            if(node.hasdeBias){
+        int dilate = ARGSMAX(node.dilateX, node.dilateY);
+        if(dilate > 0){
+            memory::dims deconv_deliatd = {node.dilateX, node.dilateX};
+            if(node.hasBias){
                 auto deconv_desc  = deconvolution_forward::desc(prop_kind::forward_inference, algorithm::deconvolution_direct,
                                             node.src_bottom_md, node.src_weights_md,
                                             node.src_bias_md, node.layer_top_md,
                                             node.deconv_strides, deconv_deliatd,
-                                            node.deconv_padding,node.deconv_padding);
+                                            node.deconv_paddingL,node.deconv_paddingR);
                 node.deconv_pdesc = deconvolution_forward::primitive_desc(deconv_desc, BrixLab::graph_eng);
 
             }else{
@@ -425,23 +449,23 @@ namespace BrixLab
                                             node.src_bottom_md, node.src_weights_md,
                                             node.layer_top_md,
                                             node.deconv_strides, deconv_deliatd,
-                                            node.deconv_padding, node.deconv_padding);
+                                            node.deconv_paddingL, node.deconv_paddingR);
                 node.deconv_pdesc = deconvolution_forward::primitive_desc(deconv_desc, BrixLab::graph_eng);
             }
-        }else if(node.dedialited_rate == 0){
-            if(node.hasdeBias){
+        }else if(dilate == 0){
+            if(node.hasBias){
                 auto deconv_desc  = deconvolution_forward::desc(prop_kind::forward_inference, algorithm::deconvolution_direct,
                                             node.src_bottom_md, node.src_weights_md,
                                             node.src_bias_md, node.layer_top_md,
-                                            node.deconv_strides, node.deconv_padding,
-                                            node.deconv_padding);
+                                            node.deconv_strides, node.deconv_paddingL,
+                                            node.deconv_paddingR);
                 node.deconv_pdesc = deconvolution_forward::primitive_desc(deconv_desc, BrixLab::graph_eng);
             }else{
                 auto deconv_desc  = deconvolution_forward::desc(prop_kind::forward_inference, algorithm::deconvolution_direct,
                                             node.src_bottom_md, node.src_weights_md,
                                             node.layer_top_md,
-                                            node.deconv_strides, node.deconv_padding,
-                                            node.deconv_padding);
+                                            node.deconv_strides, node.deconv_paddingL,
+                                            node.deconv_paddingR);
                 node.deconv_pdesc = deconvolution_forward::primitive_desc(deconv_desc, BrixLab::graph_eng);
             }
         }
@@ -459,18 +483,18 @@ namespace BrixLab
         return node;
     }
     
-    void OP_innerproduct_inference_forward(layerNode<float> &node, graphSet<float> &g_net){
+    void OP_innerproduct_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
         // Reorder the data in case the weights memory layout generated by the
         // primitive and the one provided by the user are different. In this case,
         // we create additional memory objects with internal buffers that will
         // contain the reordered data.
-        node.src_bottom_memory = g_net.input;
-        if (node.inner_pdesc.weights_desc() != node.src_weights_memory.get_desc()) {
-            node.src_weights_memory = memory(node.inner_pdesc.weights_desc(), BrixLab::graph_eng);
-            reorder(node.src_weights_memory, node.src_weights_memory).execute(BrixLab::graph_stream, 
-                                    node.src_bottom_memory, node.src_weights_memory);
+        node->src_bottom_memory = g_net.input;
+        if (node->inner_pdesc.weights_desc() != node->src_weights_memory.get_desc()) {
+            node->src_weights_memory = memory(node->inner_pdesc.weights_desc(), BrixLab::graph_eng);
+            reorder(node->src_weights_memory, node->src_weights_memory).execute(BrixLab::graph_stream, 
+                                    node->src_bottom_memory, node->src_weights_memory);
         }
-        inner_product_forward(node.inner_pdesc).execute(BrixLab::graph_stream, node.op_args);
+        inner_product_forward(node->inner_pdesc).execute(BrixLab::graph_stream, node->op_args);
     }
    
     layerNode<float> OP_innerproduct_layer_setup(const layerWeightsParam<float> &param){
@@ -529,9 +553,9 @@ namespace BrixLab
         return node;
     }
    
-    void OP_activation_inference_forward(layerNode<float> &node, graphSet<float> &g_net){
-        node.src_bottom_memory = g_net.input;
-        eltwise_forward(node.eltwise_pdesc).execute(BrixLab::graph_stream, node.op_args);
+    void OP_activation_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
+        node->src_bottom_memory = g_net.input;
+        eltwise_forward(node->eltwise_pdesc).execute(BrixLab::graph_stream, node->op_args);
     }
     
     layerNode<float> OP_activation_layer_setup(const layerWeightsParam<float> &param){
@@ -598,7 +622,7 @@ namespace BrixLab
         while(layer_node != nullptr){
             OP_type type= layer_node->op_type;
             std::string OP_name = get_mapped_op_string(type);
-            layer_node->inference_forward((*layer_node), graph_state);
+            layer_node->inference_forward(layer_node, graph_state);
             graph_state.input = layer_node->layer_top_memory;
             layer_node = layer_node->next;
             layer_count++;

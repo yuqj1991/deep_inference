@@ -54,6 +54,18 @@ namespace BrixLab
         LINEAR_SCALE_BIAS,
         LOG,
     };
+    enum FusedActivation {
+        Fused_kTfLiteActNone = 0,
+        Fused_kTfLiteActRelu = 1,
+        Fused_kTfLiteActRelu1 = 2,
+        Fused_kTfLiteActRelu6 = 3,
+        Fused_kTfLiteActTanh = 4,
+        Fused_kTfLiteActSignBit = 5,
+        Fused_kTfLiteActSigmoid = 6,
+        Fused_MIN = Fused_kTfLiteActNone,
+        Fused_MAX = Fused_kTfLiteActSigmoid
+    };
+
     enum EltwiseType{
         ElementSum,
         ElementProduct,
@@ -62,24 +74,47 @@ namespace BrixLab
         PoolingMAX,
         PoolingAVAGE,
     };
+    enum TensorType{
+        UINT8_QUANTIZED,
+        FLOAT32_REGULAR,
+    };
+    enum PaddingType{
+        PaddingSAME,
+        PaddingVALID,
+    };
     template<typename DType>
     struct layerWeightsParam{
+        TensorType quantized_type;
         std::string node_name;
         DATA_FORMATE formate;
         OP_type op_type;
         int inBatch, inChannel, inHeight, inWidth;
+        std::vector<int> inIndexs;
+        std::vector<int> outIndexs;
+        int weights_zero_point;//quantized_uint8 needed for weights
+        float weights_scale; // quantized_uint8 needed for weights
+        int bias_zero_point;
+        float bias_scale;
+        int inputs_zero_point;
+        float inputs_scale;
+        int outputs_zero_point;
+        float outputs_scale;
         // (de)convolution params
+        bool relu;
+        bool relu6;
         int k_w;
         int k_h;
-        int padding;
-        int strides;
+        PaddingType mpad;
+        int stridesX, stridesY;
         int k_c;
-        int dialited_rate;
+        int dilateX, dilateY;
         bool hasBias;
         int groups;
+        //convolution weights
         DType *conv_weights;
         DType *conv_bias;
-        //deconvolution layer
+        FusedActivation fused_act_type;
+        //deconvolution weights
         DType *transposed_weights;
         DType *transposed_bias;
 
@@ -144,26 +179,34 @@ namespace BrixLab
         int layer_c;
         int layer_n;
         OP_type op_type;            
-        dnnl::memory::dims bottom_shape;
+        
         dnnl::memory::dims top_shape;
-        dnnl::memory::dims weights_shape;
-        dnnl::memory::dims bias_shape;
         dnnl::memory layer_top_memory;
         dnnl::memory::desc layer_top_md;
-        dnnl::memory src_bottom_memory;
+
+        dnnl::memory::dims bottom_shape;
         dnnl::memory::desc src_bottom_md;
-        dnnl::memory src_weights_memory;
+        dnnl::memory src_bottom_memory;
+
+        dnnl::memory::dims weights_shape;
         dnnl::memory::desc src_weights_md;
-        dnnl::memory src_bias_memory;
+        dnnl::memory src_weights_memory;
+
+        dnnl::memory::dims bias_shape;
         dnnl::memory::desc src_bias_md;
-        // convolution layer & param
+        dnnl::memory src_bias_memory;
+        // (de)convolution layer & param
         int groups;
-        int dialited_rate;
+        int dilateX, dilateY;
         bool hasBias;
         dnnl::memory::dims conv_strides;
-        dnnl::memory::dims conv_padding;
-
-        dnnl::convolution_forward::primitive_desc convolution_pdesc;
+        dnnl::memory::dims conv_paddingL;
+        dnnl::memory::dims conv_paddingR;
+        dnnl::convolution_forward::primitive_desc conv_pdesc;
+        // deconvolution(transposed convolution) layer & param
+        dnnl::memory::dims deconv_strides;
+        dnnl::memory::dims deconv_paddingL, deconv_paddingR;
+        dnnl::deconvolution_forward::primitive_desc deconv_pdesc;
         
         // batchnorm layer
         dnnl::memory::dims batchnorm_scale_shift_shape;
@@ -211,13 +254,6 @@ namespace BrixLab
         float adjust_scale;
         dnnl::resampling_forward::primitive_desc resample_pdesc;
 
-        // deconvolution(transposed convolution) layer & param
-        int dedialited_rate;
-        bool hasdeBias;
-        dnnl::memory::dims deconv_strides;
-        dnnl::memory::dims deconv_padding;
-        dnnl::deconvolution_forward::primitive_desc deconv_pdesc;
-
         //inner-product layer
         dnnl::inner_product_forward::primitive_desc inner_pdesc;
 
@@ -225,7 +261,7 @@ namespace BrixLab
         std::unordered_map<int, dnnl::memory> op_args;
         layerNode<DType> *next;
         layerNode<DType> *front;
-        void (*inference_forward)(layerNode<DType> &, graphSet<DType>&);
+        void (*inference_forward)(layerNode<DType> *, graphSet<DType>&);
         layerNode<DType>(OP_type type):op_type(type){}
     };
 
