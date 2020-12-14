@@ -4,6 +4,8 @@
 #include "utils.hpp"
 #include "schema_generated.h"
 #include "logkit.hpp"
+
+typedef std::unique_ptr<tflite::QuantizationParametersT> tfliteQuanParam;
 namespace BrixLab
 {
     enum DataType {
@@ -50,10 +52,10 @@ namespace BrixLab
 
     template<typename DType>
     bool convertDataFormatTflite(const DType* src, DType* dst, int KH, int KW, int CI, int CO) {
-        LOG_CHECK(KH > 0, "KH>0");
-        LOG_CHECK(KW > 0, "KW>0");
-        LOG_CHECK(CI > 0, "KI>0");
-        LOG_CHECK(CO > 0, "KO>0");
+        LOG_CHECK(KH > 0, "KH>0")<<"KH <= 0";
+        LOG_CHECK(KW > 0, "KW>0")<<"KW <= 0";
+        LOG_CHECK(CI > 0, "KI>0")<<"CI <= 0";
+        LOG_CHECK(CO > 0, "KO>0")<<"KO <= 0";
         LOG_CHECK(src != nullptr, "src != nullptr");
         // CO KH KW CI --> CO CI KH KW
         for (int oc = 0; oc < CO; ++oc) {
@@ -69,8 +71,56 @@ namespace BrixLab
         return true;
     }
 
+    typedef struct _DataShape{
+        int Batch;
+        int Channel;
+        int Height;
+        int Width;
+    }DataShape;
+
     #define ARGSMAX(a, b) ((a) >= (b) ? (a): (b))
     #define ARGSMIN(a, b) ((a) >= (b) ? (b): (a))
+
+    inline void CalculateActivationRangeUint8(const BrixLab::FusedActivation activation, 
+                                                const tfliteQuanParam& outputQuan,
+                                                int32_t* act_min, int32_t* act_max) {
+        const int32_t qmin      = std::numeric_limits<uint8_t>::min();
+        const int32_t qmax      = std::numeric_limits<uint8_t>::max();
+        const auto scale        = outputQuan->scale[0];
+        const int32_t zeroPoint = static_cast<int32_t>(outputQuan->zero_point[0]);
+
+        auto quantize = [scale, zeroPoint](float f) { return zeroPoint + static_cast<int32_t>(std::round(f / scale)); };
+
+        if (activation == BrixLab::FusedActivation::Fused_kTfLiteActRelu) {
+            *act_min = ARGSMAX(qmin, quantize(0.0));
+            *act_max = qmax;
+        } else if (activation == BrixLab::FusedActivation::Fused_kTfLiteActRelu6) {
+            *act_min = ARGSMAX(qmin, quantize(0.0));
+            *act_max = ARGSMIN(qmax, quantize(6.0));
+        } else if (activation == BrixLab::FusedActivation::Fused_kTfLiteActRelu1) {
+            *act_min = ARGSMAX(qmin, quantize(-1.0));
+            *act_max = ARGSMIN(qmax, quantize(1.0));
+        } else {
+            *act_min = qmin;
+            *act_max = qmax;
+        }
+    }
+
+    inline PoolingType get_tflitePooling_Type(tflite::BuiltinOperator opcode){
+        PoolingType pool_type;
+        switch (opcode)
+        {
+        case tflite::BuiltinOperator::BuiltinOperator_AVERAGE_POOL_2D:
+            pool_type   = BrixLab::PoolingType::PoolingAVAGE;
+            break;
+        case tflite::BuiltinOperator::BuiltinOperator_MAX_POOL_2D:
+            pool_type   = BrixLab::PoolingType::PoolingMAX;
+            break;
+        default:
+            break;
+        }
+        return pool_type;
+    }
 
 } // namespace BrixLab
 

@@ -5,8 +5,8 @@
 namespace BrixLab{
     void checK_equal_dims(const dnnl::memory::dims &A_Shape,  
                                 const dnnl::memory::dims &B_Shape){
-        int A_dims = A_Shape.size();
-        int B_dims = B_Shape.size();
+        unsigned int A_dims = A_Shape.size();
+        unsigned int B_dims = B_Shape.size();
         assert(A_dims = B_dims);
         for(unsigned ii = 0; ii < A_dims; ii++){
             assert(A_Shape[ii] == B_Shape[ii]);

@@ -26,7 +26,7 @@ namespace BrixLab
 {
     static dnnl::engine graph_eng(dnnl::engine::kind::cpu, 0);
     static dnnl::stream graph_stream(graph_eng);
-    enum DATA_FORMATE{
+    enum TENSOR_FORMATE{
         NHWC,
         NHCW,
     };
@@ -42,6 +42,9 @@ namespace BrixLab
         RESAMPLING,
         ACTIVITION,
         INNERPRODUCT,
+        SOFTMAX,
+        REDUCTION,
+        BINARY_OP,
     };
     enum activitionType{
         ReLU,
@@ -74,7 +77,7 @@ namespace BrixLab
         PoolingMAX,
         PoolingAVAGE,
     };
-    enum TensorType{
+    enum QUANITIZED_TYPE{
         UINT8_QUANTIZED,
         FLOAT32_REGULAR,
     };
@@ -82,37 +85,91 @@ namespace BrixLab
         PaddingSAME,
         PaddingVALID,
     };
+    enum ResizingType{
+        ResizingNearest,
+        ResizingBilinear,
+    };
+    enum ReductionType {
+        ReductionType_SUM = 0,
+        ReductionType_ASUM = 1,
+        ReductionType_SUMSQ = 2,
+        ReductionType_MEAN = 3,
+        ReductionType_MAXIMUM = 4,
+        ReductionType_MINIMUM = 5,
+        ReductionType_PROD = 6,
+        ReductionType_ANY = 7,
+        ReductionType_ALL = 8,
+        ReductionType_MIN = ReductionType_SUM,
+        ReductionType_MAX = ReductionType_ALL
+    };
+    enum BinaryOpOperationType {
+        BinaryOpOperation_ADD = 0,
+        BinaryOpOperation_SUB = 1,
+        BinaryOpOperation_MUL = 2,
+        BinaryOpOperation_DIV = 3,
+        BinaryOpOperation_MAX_TEMP = 4,
+        BinaryOpOperation_MIN_TEMP = 5,
+        BinaryOpOperation_POW = 6,
+        BinaryOpOperation_REALDIV = 7,
+        BinaryOpOperation_MINIMUM = 8,
+        BinaryOpOperation_MAXIMUM = 9,
+        BinaryOpOperation_GREATER = 10,
+        BinaryOpOperation_GREATER_EQUAL = 11,
+        BinaryOpOperation_LESS = 12,
+        BinaryOpOperation_FLOORDIV = 13,
+        BinaryOpOperation_SquaredDifference = 14,
+        BinaryOpOperation_EQUAL = 15,
+        BinaryOpOperation_LESS_EQUAL = 16,
+        BinaryOpOperation_FLOORMOD = 17,
+        BinaryOpOperation_MOD = 19,
+        BinaryOpOperation_ATAN2 = 20,
+        BinaryOpOperation_LOGICALOR = 21,
+        BinaryOpOperation_NOTEQUAL = 22,
+        BinaryOpOperation_MIN = BinaryOpOperation_ADD,
+        BinaryOpOperation_MAX = BinaryOpOperation_NOTEQUAL
+    };
     template<typename DType>
     struct layerWeightsParam{
-        TensorType quantized_type;
         std::string node_name;
-        DATA_FORMATE formate;
+        TENSOR_FORMATE formate;
         OP_type op_type;
-        int inBatch, inChannel, inHeight, inWidth;
+        int inBatch;
+        int inChannel;
+        int inHeight;
+        int inWidth;
+        int layer_h;
+        int layer_w;
+        int layer_c;
+        int layer_n;
         std::vector<int> inIndexs;
         std::vector<int> outIndexs;
-        int weights_zero_point;//quantized_uint8 needed for weights
-        float weights_scale; // quantized_uint8 needed for weights
+        //quantized_uint8 needed for weights & inputs
+        int weights_zero_point;
+        float weights_scale;
         int bias_zero_point;
         float bias_scale;
-        int inputs_zero_point;
-        float inputs_scale;
+        std::vector<int> inputs_zeropoint;
+        std::vector<float> inputs_scale;
         int outputs_zero_point;
         float outputs_scale;
+        QUANITIZED_TYPE quantized_type;
+        int32_t *quantized_bias;
         // (de)convolution params
         bool relu;
         bool relu6;
         int k_w;
         int k_h;
-        PaddingType mpad;
+        PaddingType padMode;
         int stridesX, stridesY;
         int k_c;
+        int k_in;
         int dilateX, dilateY;
         bool hasBias;
         int groups;
         //convolution weights
         DType *conv_weights;
         DType *conv_bias;
+        
         FusedActivation fused_act_type;
         //deconvolution weights
         DType *transposed_weights;
@@ -128,19 +185,19 @@ namespace BrixLab
         bool in_palce;                      
 
         //pooling params
-        int p_kw;
-        int p_kh;
-        int p_strides;
-        int p_padding;
-        PoolingType p_type;
-        int p_diliated;
+        int32_t outActivationMin;
+        int32_t outActivationMax;
+        PoolingType pooling_type;
+        PaddingType pooling_padType;
+        int p_kernelsX, p_kernelsY;
+        int p_stridesX, p_stridesY;
+        int p_paddingX, p_paddingY;
+        int p_dilatedX, p_dilatedY;
 
         //innerproducts params
-        int inner_out;
         float alpha, beta;
-        DType *inner_weights;
-        bool has_inner_product_bias;
-        DType *inner_bias;
+        DType *innerWeights;
+        DType *innerBias;
 
         //concat params
         int *concat_index;
@@ -150,11 +207,27 @@ namespace BrixLab
         //Eltwise_SUM params
         int *sum_index;
         int sum_num;
-        int layer_h;
-        int layer_w;
+        
         EltwiseType eleType;
-        //resample layer
-        float adjust_scale;
+        //resample(resizedBilinar) layer
+        float adjust_width_scale;
+        float adjust_height_scale;
+        ResizingType resized_type;
+        bool resized_alignCorners;
+        int resized_height;
+        int resized_width;
+
+        //softmax layer
+        float softmax_beta;
+        float softmax_inputscale;
+        float softmax_axis;
+
+        //reduction layer
+        bool reduce_keep_dims;
+        ReductionType reduction_type;
+
+        //binary op_layer
+        BinaryOpOperationType binary_type;
     };
 
     template<typename DType>
@@ -274,8 +347,8 @@ namespace BrixLab
         int current_index;
         int graphSize;
         
-        graphSet(const int &size, const int &index, const dnnl::memory &temp_memory): current_index(index), 
-                                        graphSize(size), head(nullptr), current(nullptr){
+        graphSet(const int &size, const int &index, const dnnl::memory &temp_memory):
+                head(nullptr), current(nullptr),current_index(index), graphSize(size) {
             input = temp_memory;
         }
         layerNode<DType> *operator[](const int &index){
@@ -343,6 +416,42 @@ namespace BrixLab
             }
             case OP_type::POOLING:{
                 op_name = std::string("OP_pooling");
+                break;
+            }
+            case OP_type::DATA_INPUTS:{
+                op_name = std::string("OP_inputs");
+                break;
+            }
+            case OP_type::DETECTION:{
+                op_name = std::string("OP_detection");
+                break;
+            }
+            case OP_type::CONCAT:{
+                op_name = std::string("OP_concat");
+                break;
+            }
+            case OP_type::RESAMPLING:{
+                op_name = std::string("OP_resample");
+                break;
+            }
+            case OP_type::ACTIVITION:{
+                op_name = std::string("OP_activition");
+                break;
+            }
+            case OP_type::INNERPRODUCT:{
+                op_name = std::string("OP_innerproduct");
+                break;
+            }
+            case OP_type::SOFTMAX:{
+                op_name = std::string("OP_softmax");
+                break;
+            }
+            case OP_type::REDUCTION:{
+                op_name = std::string("OP_reduction");
+                break;
+            }
+            case OP_type::BINARY_OP:{
+                op_name = std::string("OP_binary");
                 break;
             }
         }

@@ -8,7 +8,7 @@ namespace BrixLab
         deconv_param.k_h = 2;
         deconv_param.stridesY = 2;
         deconv_param.stridesX = 2;
-        deconv_param.mpad = PaddingVALID;
+        deconv_param.padMode = PaddingVALID;
         deconv_param.k_c = 128;
 
         deconv_param.inBatch = 3;
@@ -56,7 +56,7 @@ namespace BrixLab
         conv_param.k_h = 3;
         conv_param.stridesX = 2;
         conv_param.stridesY = 2;
-        conv_param.mpad = PaddingVALID;
+        conv_param.padMode = PaddingVALID;
         conv_param.k_c = 128;
 
         conv_param.inBatch = 3;

@@ -27,6 +27,7 @@ option(DNNL_VERBOSE "allows oneDNN be verbose whenever DNNL_VERBOSE environment 
 
 add_executable(demo_inference
         include/
+        source/Optflite.cpp
         source/liteopConvert.cpp
         source/layer_builder.cpp
         source/utils.cpp

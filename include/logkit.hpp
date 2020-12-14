@@ -122,7 +122,7 @@ class LogMessage{
         Flush();
     }
 
-    void* send_log(){
+    void send_log(){
         if(level == FATAL_ERROR){
             fprintf(stderr, "\033[0;3%sm", "");
             fwrite(data->message_text_, data->num_char_to_log_, 1, stderr);

@@ -31,7 +31,7 @@ namespace BrixLab
         int k_padXR = 0;
         int k_padYT = 0;
         int k_padYB = 0;
-        int data_formate = param.formate;
+        TENSOR_FORMATE data_formate = param.formate;
         int inHeight = param.inHeight;
         int inChannel = param.inChannel;
         int inWidth = param.inWidth;
@@ -40,7 +40,7 @@ namespace BrixLab
         node.dilateY = param.dilateY;
         int outWidth = floor((inWidth - (1 + (k_w - 1) * (node.dilateX + 1)) + k_padXL + k_padXR) / k_sX) + 1;
         int outHeight = floor((inHeight - ((1 + (k_h - 1) * (node.dilateX + 1))) + k_padYB + k_padYT) / k_sY) + 1; 
-        if(param.mpad == PaddingType::PaddingSAME){
+        if(param.padMode == PaddingType::PaddingSAME){
             outHeight    = std::ceil((inHeight) / k_sY); // oh = ceil(ih / stride)
             outWidth    = std::ceil((inWidth) / k_sX); // ow = ceil(iw / stride)
             int pad_width = ARGSMAX(0, ((outWidth - 1) * k_sX + ((k_w - 1) * (node.dilateX + 1) + 1) - inWidth) / 2);
@@ -211,35 +211,37 @@ namespace BrixLab
         node.layer_c = inChannel;
         node.layer_w = inWidth;
         node.layer_n = inBatch;
-        int k_w = param.p_kw;
-        int k_h = param.p_kh;
-        int k_s = param.p_strides;
-        int k_pad = param.p_padding;
+        int k_w = param.p_kernelsX;
+        int k_h = param.p_kernelsY;
+        int k_s = param.p_stridesX;
+        int k_padX = param.p_paddingX;
+        int k_padY = param.p_paddingY;
         node.bottom_shape = {inBatch, inChannel, inHeight, inWidth};
-        int dialiated_rate = param.p_diliated;
-        node.p_dialiated = param.p_diliated;
-        PoolingType p_type = param.p_type;
+        int dilatedX = param.p_dilatedX;
+        int dilatedY = param.p_dilatedY;
+        int dilated = ARGSMIN(dilatedX, dilatedY);
+        PoolingType p_type = param.pooling_type;
         node.pooling_type = get_op_mapped_pooling_type(p_type);
         int outHight = 0;
         int outWidth = 0;
-        if(dialiated_rate == 0){
-            outHight = (inHeight - k_h + 2 * k_pad) / k_s + 1;
-            outWidth = (inWidth - k_w + 2 * k_pad) / k_s + 1;
-        }else if(dialiated_rate > 0){
-            outHight = (inHeight - ((k_h - 1) * dialiated_rate + k_h) +2 *k_pad) / k_s + 1;
-            outWidth = (inWidth - ((k_w - 1) * dialiated_rate + k_w) +2 *k_pad) / k_s + 1;
+        if(dilated == 0){
+            outHight = (inHeight - k_h + 2 *k_padX) / k_s + 1;
+            outWidth = (inWidth - k_w + 2 * k_padY) / k_s + 1;
+        }else if(dilated > 0){
+            outHight = (inHeight - ((k_h - 1) * dilatedY + k_h) +2 *k_padX) / k_s + 1;
+            outWidth = (inWidth - ((k_w - 1) * dilatedX + k_w) +2 *k_padY) / k_s + 1;
         }
         
         node.pooling_kernel = {k_w, k_h};
         node.pooling_strides = {k_s, k_s};
-        node.pooling_padding = {k_pad, k_pad};
-        node.pooling_dialiate = {dialiated_rate, dialiated_rate};
+        node.pooling_padding = {k_padX, k_padY};
+        node.pooling_dialiate = {dilatedX, dilatedY};
         
         node.top_shape = {inBatch, inChannel, outHight, outWidth};
         node.layer_top_md = memory::desc(node.top_shape, dt::f32, tag::nchw);
         node.layer_top_memory = memory(node.layer_top_md, BrixLab::graph_eng);
         node.src_bottom_md = memory::desc(node.bottom_shape, dt::f32, tag::nchw);
-        if(dialiated_rate > 0){
+        if(dilated > 0){
             dnnl::pooling_v2_forward::desc pooling_desc = pooling_v2_forward::desc(prop_kind::forward_inference,
                                             node.pooling_type, node.src_bottom_md, 
                                             node.layer_top_md,
@@ -247,7 +249,7 @@ namespace BrixLab
                                             node.pooling_dialiate, node.pooling_padding, 
                                             node.pooling_padding);
             node.pooling_pdesc = pooling_v2_forward::primitive_desc(pooling_desc, BrixLab::graph_eng);
-        }else if(dialiated_rate == 0){
+        }else if(dilated == 0){
             dnnl::pooling_forward::desc pooling_desc_without_d = pooling_forward::desc(prop_kind::forward_inference, 
                                                 node.pooling_type, node.src_bottom_md, 
                                                 node.layer_top_md, node.pooling_strides, 
@@ -326,7 +328,8 @@ namespace BrixLab
             node.op_args.insert({DNNL_ARG_MULTIPLE_SRC + ii, node.sum_bottom_memory[ii]});
         }
         node.inference_forward = OP_sum_inference_forward;
-        return node;*/
+        */
+        return node;
     }
     
     void OP_resample_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
@@ -343,9 +346,8 @@ namespace BrixLab
         node.bottom_shape = {inBatch, inChannel, inHeight, inWidth};
         node.op_type = param.op_type;
         node.src_bottom_md = memory::desc(node.bottom_shape, dt::f32, tag::nchw);
-        node.adjust_scale = param.adjust_scale;
-        int outHeight = int(inHeight * node.adjust_scale);
-        int outWidth = int(inWidth * node.adjust_scale);
+        int outHeight = int(inHeight * param.adjust_height_scale);
+        int outWidth = int(inWidth * param.adjust_width_scale);
         node.top_shape = {inBatch, inChannel, outHeight, outWidth};
         node.layer_top_md = memory::desc(node.top_shape, dt::f32, tag::nchw);
         node.layer_top_memory = memory(node.layer_top_md, BrixLab::graph_eng);
@@ -391,7 +393,7 @@ namespace BrixLab
         int k_padXR = 0;
         int k_padYT = 0;
         int k_padYB = 0;
-        int data_formate = param.formate;
+        TENSOR_FORMATE data_formate = param.formate;
         int inHeight = param.inHeight;
         int inChannel = param.inChannel;
         int inWidth = param.inWidth;
@@ -499,8 +501,8 @@ namespace BrixLab
    
     layerNode<float> OP_innerproduct_layer_setup(const layerWeightsParam<float> &param){
         layerNode<float> node(OP_type::INNERPRODUCT);
-        int k_c = param.inner_out;
-        int data_formate = param.formate;
+        int k_c = param.k_c;
+        TENSOR_FORMATE data_formate = param.formate;
         int inHeight = param.inHeight;
         int inChannel = param.inChannel;
         int inWidth = param.inWidth;
@@ -515,11 +517,11 @@ namespace BrixLab
         node.src_bottom_md = memory::desc({node.bottom_shape}, dt::f32, tag::nchw);
         // weights & bias
         node.src_weights_memory =  memory({node.weights_shape, dt::f32, tag::oihw}, BrixLab::graph_eng);
-        write_to_dnnl_memory(param.inner_weights, node.src_weights_memory);
+        write_to_dnnl_memory(param.innerWeights, node.src_weights_memory);
         node.src_weights_md = memory::desc({node.weights_shape}, dt::f32, tag::any);
 
         node.src_bias_memory = memory({{node.bias_shape}, dt::f32, tag::x}, BrixLab::graph_eng);
-        write_to_dnnl_memory(param.inner_bias, node.src_bias_memory);
+        write_to_dnnl_memory(param.innerWeights, node.src_bias_memory);
         node.src_bias_md = memory::desc({node.bias_shape}, dt::f32, tag::any);
 
         node.top_shape = {inBatch, k_c};
@@ -594,9 +596,9 @@ namespace BrixLab
     }
     
     NetGraph::NetGraph(const int &inH, const int &inW, const int &size, 
-                const std::string &tflite_path, const memory &input):input_h(inH), input_w(inW), 
-                graph_size(size),tflite_file(tflite_path), _tflite_model(nullptr),
-                graph_state(graphSet<float>(0, 0, input)){
+                const std::string &tflite_path, const memory &input):input_w(inW), input_h(inH), 
+                graph_state(graphSet<float>(0, 0, input)), graph_size(size),_tflite_model(nullptr), 
+                tflite_file(tflite_path){
     }
 
     
@@ -616,7 +618,7 @@ namespace BrixLab
 
     
     void NetGraph::network_predict(){
-        int size = graph_state.graphSize;
+        //int size = graph_state.graphSize;
         int layer_count = 0;
         layerNode<float> *layer_node = graph_state.head;
         while(layer_node != nullptr){
@@ -675,7 +677,7 @@ namespace BrixLab
         // check whether this tflite model is quantization model
         // use the weight's data type of Conv2D|DepthwiseConv2D to decide quantizedModel mode
         bool quantizedModel = true;
-        for (int i = 0; i < subGraphsSize; ++i) {
+        for (unsigned int i = 0; i < subGraphsSize; ++i) {
             const auto& ops     = _tflite_model->subgraphs[i]->operators;
             const auto& tensors = _tflite_model->subgraphs[i]->tensors;
             const int opNums    = ops.size();
@@ -696,7 +698,7 @@ namespace BrixLab
         }
         auto& buffers = _tflite_model->buffers;
 
-        for (int i = 0; i < subGraphsSize; ++i) {
+        for (unsigned int i = 0; i < subGraphsSize; ++i) {
             const auto& ops     = _tflite_model->subgraphs[i]->operators;
             const auto& tensors = _tflite_model->subgraphs[i]->tensors;
             // set const
@@ -707,7 +709,7 @@ namespace BrixLab
                 const auto& inputTensor = tensors[index];
                 input_OpT.node_name           = inputTensor->name;
                 input_OpT.op_type           = OP_type::DATA_INPUTS;
-                input_OpT.formate = DATA_FORMATE::NHWC;
+                input_OpT.formate = TENSOR_FORMATE::NHWC;
                 input_OpT.inBatch = inputTensor->shape[0];
                 input_OpT.inChannel = inputTensor->shape[3];
                 input_OpT.inHeight = inputTensor->shape[1];
@@ -715,7 +717,7 @@ namespace BrixLab
                 g_net.layer_ops.emplace_back(input_OpT);
             }
             // set output names
-            for (int k = 0; k < _tflite_model->subgraphs[i]->outputs.size(); ++k) {
+            for (unsigned int k = 0; k < _tflite_model->subgraphs[i]->outputs.size(); ++k) {
                 g_net.output_name.push_back(tensors[_tflite_model->subgraphs[i]->outputs[k]]->name);
             }
             // tensor names

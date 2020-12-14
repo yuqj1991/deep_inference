@@ -33,6 +33,7 @@ namespace BrixLab
     
     void OP_convolution_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
     
+    //template<typename DType, typename dnnDtype>
     layerNode<float> OP_convolution_layer_setup(const layerWeightsParam<float> &param);
     
 
