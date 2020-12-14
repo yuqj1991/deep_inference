@@ -777,12 +777,10 @@ namespace BrixLab
             for (const auto& tensor : tensors) {
                 g_net.tensorName.push_back(tensor->name);
             }
-
             const int opNums = ops.size();
             for (int j = 0; j < opNums; ++j) {
                 const int opcodeIndex = ops[j]->opcode_index;
                 const auto opCode     = tfliteOpSet[opcodeIndex]->builtin_code;
-                #if 0
                 if (needExtractInput(opCode)) {
                     for (auto input : ops[j]->inputs) {
                         if (extractedTensors[input]) {
@@ -833,8 +831,6 @@ namespace BrixLab
                         MNNNetT->oplists.emplace_back(std::move(newOp));
                     }
                 }
-                #endif
-                #if 0
                 layerWeightsParam<DType> New_OP;
                 auto creator = liteOpConvertMapKit::get()->search(opCode);
                 DCHECK(creator) << "NOT_SUPPORTED_OP: [ " << tflite::EnumNameBuiltinOperator(opCode) << " ]";
@@ -855,7 +851,6 @@ namespace BrixLab
                 // Run actual conversion
                 creator->run(op, ops[j], tensors, tfliteModelBuffer, tfliteOpSet, quantizedModel);
                 MNNNetT->oplists.emplace_back(op);
-                #endif
             }
         }
         
