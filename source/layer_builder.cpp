@@ -2,7 +2,8 @@
 #include <assert.h>
 namespace BrixLab
 {
-    void OP_convolution_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
+    template<typename DType>
+    void OP_convolution_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net){
         node->src_bottom_memory = g_net.input;
         if (node->conv_pdesc.src_desc() != node->src_bottom_memory.get_desc()) {
             auto temp_memory = memory(node->conv_pdesc.src_desc(), BrixLab::graph_eng);
@@ -19,9 +20,10 @@ namespace BrixLab
         convolution_forward(node->conv_pdesc).execute(BrixLab::graph_stream, node->op_args);
         LOG(DEBUG_INFO, "test_convolution_finished")<<"done!";
     }
-        
-    layerNode<float> OP_convolution_layer_setup(const layerWeightsParam<float> &param){
-        layerNode<float> node(OP_type::CONVOLUTION);
+
+    template<typename DType>
+    layerNode<DType> OP_convolution_layer_setup(const layerWeightsParam<DType> &param){
+        layerNode<DType> node(OP_type::CONVOLUTION);
         int k_w = param.k_w;
         int k_h = param.k_h;
         int k_c = param.k_c;
@@ -31,6 +33,13 @@ namespace BrixLab
         int k_padXR = 0;
         int k_padYT = 0;
         int k_padYB = 0;
+        QUANITIZED_TYPE quantized_type = param.quantized_type;
+        memory::data_type dnnDataType = dt::f32;
+        memory::data_type dnnDataBiasType = dt::f32;
+        if(quantized_type == BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED){
+            dnnDataType = dt::u8;
+            dnnDataBiasType = dt::s32;
+        }
         TENSOR_FORMATE data_formate = param.formate;
         int inHeight = param.inHeight;
         int inChannel = param.inChannel;
@@ -70,20 +79,24 @@ namespace BrixLab
             node.bias_shape = {k_c};
         
         // src bottom_md
-        node.src_bottom_md = memory::desc({node.bottom_shape}, dt::f32, tag::nchw);
+        node.src_bottom_md = memory::desc({node.bottom_shape}, dnnDataType, tag::nchw);
         // weights & bias
-        node.src_weights_md = memory::desc({node.weights_shape}, dt::f32, tag::any);
-        node.src_weights_memory = memory({{node.weights_shape}, dt::f32, tag::oihw}, BrixLab::graph_eng);
+        node.src_weights_md = memory::desc({node.weights_shape}, dnnDataType, tag::any);
+        node.src_weights_memory = memory({{node.weights_shape}, dnnDataType, tag::oihw}, BrixLab::graph_eng);
         write_to_dnnl_memory(param.conv_weights, node.src_weights_memory);
         if(node.hasBias){
-            node.src_bias_md = memory::desc({node.bias_shape}, dt::f32, tag::any);
-            node.src_bias_memory = memory({{node.bias_shape}, dt::f32, tag::x}, BrixLab::graph_eng);
-            write_to_dnnl_memory(param.conv_bias, node.src_bias_memory);
+            node.src_bias_md = memory::desc({node.bias_shape}, dnnDataBiasType, tag::any);
+            node.src_bias_memory = memory({{node.bias_shape}, dnnDataBiasType, tag::x}, BrixLab::graph_eng);
+            if(quantized_type == QUANITIZED_TYPE::UINT8_QUANTIZED){
+                write_to_dnnl_memory(param.quantized_bias, node.src_bias_memory);
+            }else if(quantized_type == QUANITIZED_TYPE::FLOAT32_REGULAR){
+                write_to_dnnl_memory(param.conv_bias, node.src_bias_memory);
+            }
         }
         // output feature shape
         
         node.top_shape = {inBatch, k_c, outHeight, outWidth};
-        node.layer_top_md = memory::desc({node.top_shape}, dt::f32, tag::any);
+        node.layer_top_md = memory::desc({node.top_shape}, dnnDataType, tag::any);
         node.layer_h = outHeight;
         node.layer_c = k_c;
         node.layer_w = outWidth;
@@ -135,15 +148,17 @@ namespace BrixLab
         node.inference_forward = OP_convolution_inference_forward; 
         return node;
     }
+    INSTANCE_LAYEROP(convolution);
     
-    
-    void OP_batchnorm_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
+    template<typename DType>
+    void OP_batchnorm_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net){
         node->src_bottom_memory = g_net.input;
         batch_normalization_forward(node->batchnorm_pdesc).execute(BrixLab::graph_stream, node->op_args);
     }
         
-    layerNode<float> OP_batchnorm_layer_setup(const layerWeightsParam<float> &param){
-        layerNode<float> node(OP_type::BATCHNORM);
+    template<typename DType>
+    layerNode<DType> OP_batchnorm_layer_setup(const layerWeightsParam<DType> &param){
+        layerNode<DType> node(OP_type::BATCHNORM);
         int inHeight = param.inHeight;
         int inChannel = param.inChannel;
         int inWidth = param.inWidth;
@@ -190,9 +205,10 @@ namespace BrixLab
         node.inference_forward = OP_batchnorm_inference_forward;
         return node;
     }
+    INSTANCE_LAYEROP(batchnorm);
 
-       
-    void OP_pooling_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
+    template<typename DType>   
+    void OP_pooling_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net){
          node->src_bottom_memory = g_net.input;
         if(node->p_dialiated == 0){
             pooling_forward(node->pooling_pdesc_without_d).execute(BrixLab::graph_stream, node->op_args);
@@ -200,9 +216,9 @@ namespace BrixLab
             pooling_v2_forward(node->pooling_pdesc).execute(BrixLab::graph_stream, node->op_args);
         }
     }
-        
-    layerNode<float> OP_pooling_layer_setup(const layerWeightsParam<float> &param){
-        layerNode<float> node(OP_type::POOLING);
+    template<typename DType>    
+    layerNode<DType> OP_pooling_layer_setup(const layerWeightsParam<DType> &param){
+        layerNode<DType> node(OP_type::POOLING);
         int inHeight = param.inHeight;
         int inChannel = param.inChannel;
         int inWidth = param.inWidth;
@@ -262,15 +278,15 @@ namespace BrixLab
         node.inference_forward = OP_pooling_inference_forward;
         return node;
     }
+    INSTANCE_LAYEROP(pooling);
 
-        
-    void OP_concat_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
+    template<typename DType>     
+    void OP_concat_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net){
         concat(node->concat_pdesc).execute(BrixLab::graph_stream, node->op_args);
     }
-
-        
-    layerNode<float> OP_concat_layer_setup(const layerWeightsParam<float> &param){
-        layerNode<float> node(OP_type::CONCAT);
+    template<typename DType>
+    layerNode<DType> OP_concat_layer_setup(const layerWeightsParam<DType> &param){
+        layerNode<DType> node(OP_type::CONCAT);
         int inHeight = param.inHeight;
         int inChannel = param.inChannel;
         int inWidth = param.inWidth;
@@ -294,15 +310,16 @@ namespace BrixLab
         node.inference_forward = OP_concat_inference_forward;
         return node;
     }
+    INSTANCE_LAYEROP(concat);
 
-        
-    void OP_sum_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
+    template<typename DType>    
+    void OP_sum_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net){
         sum(node->sum_pdesc).execute(BrixLab::graph_stream, node->op_args);
     }
 
-        
-    layerNode<float> OP_sum_layer_setup(const layerWeightsParam<float> &param){
-        layerNode<float> node(OP_type::ELTWISE);
+    template<typename DType>    
+    layerNode<DType> OP_sum_layer_setup(const layerWeightsParam<DType> &param){
+        layerNode<DType> node(OP_type::ELTWISE);
         node.sum_num = param.sum_num;
         node.sum_index = (int*)xcalloc(node.sum_num, sizeof(int));
         /*
@@ -313,7 +330,7 @@ namespace BrixLab
         memory::dims S_Shape = {inBatch, inChannel, inWidth, inHeight};
         for(int ii = 0; ii < node.sum_num; ii++){
             node.sum_index[ii] = param.sum_index[ii];
-            node.sum_scale[ii] = float(1.0);
+            node.sum_scale[ii] = DType(1.0);
             checK_equal_dims(S_Shape, g_net[ii]->top_shape);
             node.sum_bottom_memory.push_back(g_net[ii]->layer_top_memory);
             node.sum_bottom_md.push_back(g_net[ii]->layer_top_md);
@@ -331,18 +348,20 @@ namespace BrixLab
         */
         return node;
     }
+    INSTANCE_LAYEROP(sum);
     
-    void OP_resample_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
+    template<typename DType>
+    void OP_resample_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net){
         node->src_bottom_memory = g_net.input;
         resampling_forward(node->resample_pdesc).execute(BrixLab::graph_stream, node->op_args);
     }
-    
-    layerNode<float> OP_resample_layer_setup(const layerWeightsParam<float> &param){
+    template<typename DType>
+    layerNode<DType> OP_resample_layer_setup(const layerWeightsParam<DType> &param){
         int inHeight = param.inHeight;
         int inWidth = param.inWidth;
         int inChannel = param.inChannel;
         int inBatch = param.inBatch;
-        layerNode<float> node(OP_type::RESAMPLING);
+        layerNode<DType> node(OP_type::RESAMPLING);
         node.bottom_shape = {inBatch, inChannel, inHeight, inWidth};
         node.op_type = param.op_type;
         node.src_bottom_md = memory::desc(node.bottom_shape, dt::f32, tag::nchw);
@@ -361,8 +380,10 @@ namespace BrixLab
         node.inference_forward = OP_resample_inference_forward;
         return node;
     }
+    INSTANCE_LAYEROP(resample);
     
-    void OP_deconvolution_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
+    template<typename DType>
+    void OP_deconvolution_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net){
         node->src_bottom_memory = g_net.input;
         
         if (node->deconv_pdesc.src_desc() != node->src_bottom_memory.get_desc()) {
@@ -381,9 +402,10 @@ namespace BrixLab
         printf("[OP_deconvolution_inference_forward] done!\n");
     }    
 
-    layerNode<float> OP_deconvolution_layer_setup(const layerWeightsParam<float> &param){
+    template<typename DType>
+    layerNode<DType> OP_deconvolution_layer_setup(const layerWeightsParam<DType> &param){
         printf("start deconvolution set_up!\n");
-        layerNode<float> node(OP_type::DECONVOLUTION);
+        layerNode<DType> node(OP_type::DECONVOLUTION);
         int k_w = param.k_w;
         int k_h = param.k_h;
         int k_c = param.k_c;
@@ -394,6 +416,13 @@ namespace BrixLab
         int k_padYT = 0;
         int k_padYB = 0;
         TENSOR_FORMATE data_formate = param.formate;
+        QUANITIZED_TYPE quantized_type = param.quantized_type;
+        memory::data_type dnnDataType = dt::f32;
+        memory::data_type dnnDataBiasType = dt::f32;
+        if(quantized_type == BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED){
+            dnnDataType = dt::u8;
+            dnnDataBiasType = dt::s32;
+        }
         int inHeight = param.inHeight;
         int inChannel = param.inChannel;
         int inWidth = param.inWidth;
@@ -410,16 +439,20 @@ namespace BrixLab
         if(node.hasBias)
             node.bias_shape = {k_c};
         // src bottom data
-        node.src_bottom_md = memory::desc({node.bottom_shape}, dt::f32, tag::any);
+        node.src_bottom_md = memory::desc({node.bottom_shape}, dnnDataType, tag::any);
         // weights & bias
-        node.src_weights_memory = memory({{node.weights_shape}, dt::f32, tag::oihw}, BrixLab::graph_eng);
+        node.src_weights_memory = memory({{node.weights_shape}, dnnDataType, tag::oihw}, BrixLab::graph_eng);
         printf("start to writo to memory!\n");
         write_to_dnnl_memory(param.transposed_weights, node.src_weights_memory);
-        node.src_weights_md = memory::desc({node.weights_shape}, dt::f32, tag::any);
+        node.src_weights_md = memory::desc({node.weights_shape}, dnnDataType, tag::any);
         if(node.hasBias){
-            node.src_bias_memory = memory({{node.bias_shape}, dt::f32, tag::x}, BrixLab::graph_eng);
-            write_to_dnnl_memory(param.transposed_bias, node.src_bias_memory);
-            node.src_bias_md = memory::desc({node.bias_shape}, dt::f32, tag::any);
+            node.src_bias_memory = memory({{node.bias_shape}, dnnDataBiasType, tag::x}, BrixLab::graph_eng);
+            node.src_bias_md = memory::desc({node.bias_shape}, dnnDataBiasType, tag::any);
+            if(quantized_type == QUANITIZED_TYPE::UINT8_QUANTIZED){
+                write_to_dnnl_memory(param.quantized_bias, node.src_bias_memory);
+            }else if(quantized_type == QUANITIZED_TYPE::FLOAT32_REGULAR){
+                write_to_dnnl_memory(param.transposed_bias, node.src_bias_memory);
+            }
         }
 
         int D_kHeight = 1 + (k_h -  1) * (node.dilateX + 1);
@@ -484,8 +517,10 @@ namespace BrixLab
         node.inference_forward = OP_deconvolution_inference_forward;
         return node;
     }
+    INSTANCE_LAYEROP(deconvolution);
     
-    void OP_innerproduct_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
+    template<typename DType>
+    void OP_innerproduct_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net){
         // Reorder the data in case the weights memory layout generated by the
         // primitive and the one provided by the user are different. In this case,
         // we create additional memory objects with internal buffers that will
@@ -499,8 +534,9 @@ namespace BrixLab
         inner_product_forward(node->inner_pdesc).execute(BrixLab::graph_stream, node->op_args);
     }
    
-    layerNode<float> OP_innerproduct_layer_setup(const layerWeightsParam<float> &param){
-        layerNode<float> node(OP_type::INNERPRODUCT);
+    template<typename DType>
+    layerNode<DType> OP_innerproduct_layer_setup(const layerWeightsParam<DType> &param){
+        layerNode<DType> node(OP_type::INNERPRODUCT);
         int k_c = param.k_c;
         TENSOR_FORMATE data_formate = param.formate;
         int inHeight = param.inHeight;
@@ -512,17 +548,29 @@ namespace BrixLab
         node.bottom_shape = {inBatch, inChannel, inHeight, inWidth};
         node.weights_shape = {k_c, inChannel, inHeight, inWidth};
         node.bias_shape = {k_c};
+        QUANITIZED_TYPE quantized_type = param.quantized_type;
+        memory::data_type dnnDataType = dt::f32;
+        memory::data_type dnnDataBiasType = dt::f32;
+        if(quantized_type == BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED){
+            dnnDataType = dt::u8;
+            dnnDataBiasType = dt::s32;
+        }
         // src bottom data
         
-        node.src_bottom_md = memory::desc({node.bottom_shape}, dt::f32, tag::nchw);
+        node.src_bottom_md = memory::desc({node.bottom_shape}, dnnDataType, tag::nchw);
         // weights & bias
-        node.src_weights_memory =  memory({node.weights_shape, dt::f32, tag::oihw}, BrixLab::graph_eng);
+        node.src_weights_memory =  memory({node.weights_shape, dnnDataType, tag::oihw}, BrixLab::graph_eng);
         write_to_dnnl_memory(param.innerWeights, node.src_weights_memory);
-        node.src_weights_md = memory::desc({node.weights_shape}, dt::f32, tag::any);
+        node.src_weights_md = memory::desc({node.weights_shape}, dnnDataType, tag::any);
 
-        node.src_bias_memory = memory({{node.bias_shape}, dt::f32, tag::x}, BrixLab::graph_eng);
-        write_to_dnnl_memory(param.innerWeights, node.src_bias_memory);
-        node.src_bias_md = memory::desc({node.bias_shape}, dt::f32, tag::any);
+        node.src_bias_memory = memory({{node.bias_shape}, dnnDataBiasType, tag::x}, BrixLab::graph_eng);
+        node.src_bias_md = memory::desc({node.bias_shape}, dnnDataBiasType, tag::any);
+
+        if(quantized_type == QUANITIZED_TYPE::UINT8_QUANTIZED){
+            write_to_dnnl_memory(param.quantized_bias, node.src_bias_memory);
+        }else if(quantized_type == QUANITIZED_TYPE::FLOAT32_REGULAR){
+            write_to_dnnl_memory(param.innerBias, node.src_bias_memory);
+        }
 
         node.top_shape = {inBatch, k_c};
         
@@ -532,9 +580,9 @@ namespace BrixLab
                     node.src_weights_md, node.src_bias_md, node.layer_top_md);
         
         // Create primitive post-ops (like ReLU).
-        const float scale = 1.0f;
-        const float alpha = 0.f;
-        const float beta = 0.f;
+        const DType scale = 1.0f;
+        const DType alpha = 0.f;
+        const DType beta = 0.f;
         post_ops inner_product_ops;
         inner_product_ops.append_eltwise( scale, algorithm::eltwise_relu, alpha, beta);
         primitive_attr inner_product_attr;
@@ -554,14 +602,16 @@ namespace BrixLab
         node.inference_forward = OP_innerproduct_inference_forward; 
         return node;
     }
-   
-    void OP_activation_inference_forward(layerNode<float> *node, graphSet<float> &g_net){
+    INSTANCE_LAYEROP(innerproduct);
+
+    template<typename DType>
+    void OP_activation_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net){
         node->src_bottom_memory = g_net.input;
         eltwise_forward(node->eltwise_pdesc).execute(BrixLab::graph_stream, node->op_args);
     }
-    
-    layerNode<float> OP_activation_layer_setup(const layerWeightsParam<float> &param){
-        layerNode<float> node(OP_type::ACTIVITION);
+    template<typename DType>
+    layerNode<DType> OP_activation_layer_setup(const layerWeightsParam<DType> &param){
+        layerNode<DType> node(OP_type::ACTIVITION);
         int inHeight = param.inHeight;
         int inChannel = param.inChannel;
         int inWidth = param.inWidth;
@@ -594,33 +644,35 @@ namespace BrixLab
         };
         return node;
     }
-    
-    NetGraph::NetGraph(const int &inH, const int &inW, const int &size, 
+    INSTANCE_LAYEROP(activation);
+
+    template<typename DType>
+    NetGraph<DType>::NetGraph(const int &inH, const int &inW, const int &size, 
                 const std::string &tflite_path, const memory &input):input_w(inW), input_h(inH), 
-                graph_state(graphSet<float>(0, 0, input)), graph_size(size),_tflite_model(nullptr), 
+                graph_state(graphSet<DType>(0, 0, input)), graph_size(size),_tflite_model(nullptr), 
                 tflite_file(tflite_path){
     }
 
-    
-    int NetGraph::get_Graphsize() const{
+    template<typename DType>
+    int NetGraph<DType>::get_Graphsize() const{
         return graph_size;
     }
 
-    
-    int NetGraph::get_GraphinWidth() const{
+    template<typename DType>
+    int NetGraph<DType>::get_GraphinWidth() const{
         return input_w;
     }
 
-    
-    int NetGraph::get_GraphinHeight() const{
+    template<typename DType>
+    int NetGraph<DType>::get_GraphinHeight() const{
         return input_h;
     }
 
-    
-    void NetGraph::network_predict(){
+    template<typename DType>
+    void NetGraph<DType>::network_predict(){
         //int size = graph_state.graphSize;
         int layer_count = 0;
-        layerNode<float> *layer_node = graph_state.head;
+        layerNode<DType> *layer_node = graph_state.head;
         while(layer_node != nullptr){
             OP_type type= layer_node->op_type;
             std::string OP_name = get_mapped_op_string(type);
@@ -631,21 +683,21 @@ namespace BrixLab
         }
     }
 
-    
-    layerNode<float>* NetGraph::getGraphOutput(){
+    template<typename DType>
+    layerNode<DType>* NetGraph<DType>::getGraphOutput(){
         if(graph_state.current_index <= graph_size){
             
         }
         return graph_state.current;
     }
 
-    
-    void NetGraph::make_graph(const std::vector<layerWeightsParam<float> > &params, const int &layer_size){
+    template<typename DType>
+    void NetGraph<DType>::make_graph(const std::vector<layerWeightsParam<DType> > &params, const int &layer_size){
 
     }
 
-    
-    void NetGraph::make_netParamfromTflite(const std::string &tflite_file){
+    template<typename DType>
+    void NetGraph<DType>::make_netParamfromTflite(const std::string &tflite_file){
 
         std::ifstream inputFile(tflite_file, std::ios::binary);
         inputFile.seekg(0, std::ios::end);
@@ -665,11 +717,12 @@ namespace BrixLab
         _tflite_model = tflite::UnPackModel(buffer);
         delete[] buffer;
     }
-    NetT<float> NetGraph::tfliteConvertGraphList(){
+    template<typename DType>
+    NetT<DType> NetGraph<DType>::tfliteConvertGraphList(){
         if(_tflite_model == nullptr){
             make_netParamfromTflite(tflite_file);
         }
-        NetT<float> g_net;
+        NetT<DType> g_net;
         const auto& tfliteOpSet = _tflite_model->operator_codes;
         const auto subGraphsSize      = _tflite_model->subgraphs.size();
         const auto& tfliteModelBuffer = _tflite_model->buffers;
@@ -705,7 +758,7 @@ namespace BrixLab
             std::vector<bool> extractedTensors(_tflite_model->subgraphs[i]->tensors.size(), false);
             // set input, maybe the inputs size should be 1 in one subgraphs.
             for (const auto index : _tflite_model->subgraphs[i]->inputs) {
-                layerWeightsParam<float> input_OpT;
+                layerWeightsParam<DType> input_OpT;
                 const auto& inputTensor = tensors[index];
                 input_OpT.node_name           = inputTensor->name;
                 input_OpT.op_type           = OP_type::DATA_INPUTS;
@@ -757,9 +810,9 @@ namespace BrixLab
                         }
                         void* dst = nullptr;
                         switch (blob->dataType) {
-                            case DataType_DT_FLOAT:
-                                blob->float32s.resize(size);
-                                dst = blob->float32s.data();
+                            case DataType_DT_DType:
+                                blob->DType32s.resize(size);
+                                dst = blob->DType32s.data();
                                 break;
                             case DataType_DT_INT32:
                                 blob->int32s.resize(size);
@@ -782,7 +835,7 @@ namespace BrixLab
                 }
                 #endif
                 #if 0
-                layerWeightsParam<float> New_OP;
+                layerWeightsParam<DType> New_OP;
                 auto creator = liteOpConvertMapKit::get()->search(opCode);
                 DCHECK(creator) << "NOT_SUPPORTED_OP: [ " << tflite::EnumNameBuiltinOperator(opCode) << " ]";
 
@@ -808,6 +861,10 @@ namespace BrixLab
         
         return g_net;
     }
+
+    INSTANEC_CLASSNET(NetGraph);
+
+
 
     LayerSetup getSetupFunc(const std::string &func_name){
         if(func_name == "OP_convolution_layer_setup"){

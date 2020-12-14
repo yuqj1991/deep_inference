@@ -31,78 +31,91 @@ namespace BrixLab
     using tag = memory::format_tag;
     using dt = memory::data_type;
     
-    void OP_convolution_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
+    template<typename DType>
+    void OP_convolution_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net);
     
-    //template<typename DType, typename dnnDtype>
-    layerNode<float> OP_convolution_layer_setup(const layerWeightsParam<float> &param);
+    template<typename DType>
+    layerNode<DType> OP_convolution_layer_setup(const layerWeightsParam<DType> &param);
+
+    template<typename DType>    
+    void OP_batchnorm_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net);
     
+    template<typename DType>
+    layerNode<DType> OP_batchnorm_layer_setup(const layerWeightsParam<DType> &param);
+
+    template<typename DType>
+    void OP_pooling_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net);
+    
+    template<typename DType>
+    layerNode<DType> OP_pooling_layer_setup(const layerWeightsParam<DType> &param);
+
+    template<typename DType>
+    void OP_concat_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net);
+    
+    template<typename DType>
+    layerNode<DType> OP_concat_layer_setup(const layerWeightsParam<DType> &param);
+
+    template<typename DType>
+    void OP_sum_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net);
+    template<typename DType>
+    layerNode<DType> OP_sum_layer_setup(const layerWeightsParam<DType> &param);
+
+    template<typename DType>
+    void OP_resample_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net);
+    template<typename DType>
+    layerNode<DType> OP_resample_layer_setup(const layerWeightsParam<DType> &param);
+
+    template<typename DType>
+    void OP_deconvolution_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net);
+    template<typename DType>
+    layerNode<DType> OP_deconvolution_layer_setup(const layerWeightsParam<DType> &param);
+
+    template<typename DType>
+    void OP_innerproduct_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net);
+    template<typename DType>
+    layerNode<DType> OP_innerproduct_layer_setup(const layerWeightsParam<DType> &param);
+
+    template<typename DType>
+    void OP_activation_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net);
+    template<typename DType>
+    layerNode<DType> OP_activation_layer_setup(const layerWeightsParam<DType> &param);
 
     
-    void OP_batchnorm_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
-    
-    layerNode<float> OP_batchnorm_layer_setup(const layerWeightsParam<float> &param);
-
-    
-    void OP_pooling_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
-    
-    layerNode<float> OP_pooling_layer_setup(const layerWeightsParam<float> &param);
-
-    
-    void OP_concat_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
-    
-    layerNode<float> OP_concat_layer_setup(const layerWeightsParam<float> &param);
-
-    
-    void OP_sum_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
-    
-    layerNode<float> OP_sum_layer_setup(const layerWeightsParam<float> &param);
-
-    
-    void OP_resample_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
-    
-    layerNode<float> OP_resample_layer_setup(const layerWeightsParam<float> &param);
-
-    
-    void OP_deconvolution_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
-    
-    layerNode<float> OP_deconvolution_layer_setup(const layerWeightsParam<float> &param);
-
-    
-    void OP_innerproduct_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
-    
-    layerNode<float> OP_innerproduct_layer_setup(const layerWeightsParam<float> &param);
-
-    
-    void OP_activation_inference_forward(layerNode<float> *node, graphSet<float> &g_net);
-    
-    layerNode<float> OP_activation_layer_setup(const layerWeightsParam<float> &param);
-
-    
-    
+    template<typename DType>
     class NetGraph{
         public:
         int get_Graphsize() const;
         int get_GraphinWidth() const;
         int get_GraphinHeight() const;
-        layerNode<float> *getGraphOutput();
+        layerNode<DType> *getGraphOutput();
         NetGraph(const int &inH, const int &inW, const int &size, const std::string &tflite_path, const memory &input);
         ~NetGraph();
 
         void network_predict();
         void make_netParamfromTflite(const std::string &tflite_file);
-        void make_graph(const std::vector<layerWeightsParam<float> > &params, const int &layer_size);
-        NetT<float> tfliteConvertGraphList();
+        void make_graph(const std::vector<layerWeightsParam<DType> > &params, const int &layer_size);
+        NetT<DType> tfliteConvertGraphList();
         private:
         int input_w;
         int input_h;
-        graphSet<float> graph_state;
+        graphSet<DType> graph_state;
         int graph_size;
         std::unique_ptr<tflite::ModelT> _tflite_model;
         std::string tflite_file;
     };
-    typedef layerNode<float> (*LayerSetup)(const layerWeightsParam<float> &param);
 
+    typedef layerNode<float> (*LayerSetup)(const layerWeightsParam<float> &param);
     LayerSetup getSetupFunc(const std::string &func_name);
+
+    #define INSTANCE_LAYEROP(opname)    \
+        template layerNode<float> OP_##opname##_layer_setup(const layerWeightsParam<float> &param); \
+        template layerNode<uint8_t> OP_##opname##_layer_setup(const layerWeightsParam<uint8_t> &param); \
+        template void OP_##opname##_inference_forward(layerNode<float> *node, graphSet<float> &g_net);  \
+        template void OP_##opname##_inference_forward(layerNode<uint8_t> *node, graphSet<uint8_t> &g_net)
+
+    #define INSTANEC_CLASSNET(name)     \
+        template class name<float>;     \
+        template class name<uint8_t>
 } // namespace BrixLab
 
 #endif
