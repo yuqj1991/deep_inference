@@ -30,6 +30,39 @@ namespace BrixLab
         NHWC,
         NHCW,
     };
+    typedef struct _TensorShape{
+        int Batch;
+        int Channel;
+        int Height;
+        int Width;
+        TENSOR_FORMATE format;
+        _TensorShape operator = (const _TensorShape& right){
+            this->Batch     = right.Batch;
+            this->Channel   = right.Channel;
+            this->Height    = right.Height;
+            this->Width     = right.Width;
+            this->format    = right.format;
+            return *this;
+        }
+        bool operator == (const _TensorShape& right){
+            bool euqal = false;
+            if(Batch == right.Batch && Channel == right.Channel &&
+                Height == right.Channel && Width == right.Width){
+                euqal  = true;
+            }
+            return euqal;
+        }
+    }TensorShape;
+    // 目前支持float32、uint8、Int32运算
+    enum DataType {
+        DataType_DT_INVALID = 0,
+        DataType_DT_FLOAT = 1,
+        DataType_DT_DOUBLE = 2,
+        DataType_DT_INT32 = 3,
+        DataType_DT_UINT8 = 4,
+        DataType_DT_INT16 = 5,
+        DataType_DT_INT8 = 6,
+    };
     enum OP_type{
         DATA_INPUTS,
         CONVOLUTION,
@@ -45,6 +78,7 @@ namespace BrixLab
         SOFTMAX,
         REDUCTION,
         BINARY_OP,
+        //OP_TYPE_CONST,
     };
     enum activitionType{
         ReLU,
@@ -128,21 +162,25 @@ namespace BrixLab
         BinaryOpOperation_MIN = BinaryOpOperation_ADD,
         BinaryOpOperation_MAX = BinaryOpOperation_NOTEQUAL
     };
+
+    struct Post_OPs_Param
+    {
+        dnnl::algorithm posts_op;
+        float alpha;
+        float beta;
+        float scale;
+    };
+    
     template<typename DType>
     struct layerWeightsParam{
         std::string node_name;
-        TENSOR_FORMATE formate;
         OP_type op_type;
-        int inBatch;
-        int inChannel;
-        int inHeight;
-        int inWidth;
-        int layer_h;
-        int layer_w;
-        int layer_c;
-        int layer_n;
+        DataType data_type;
+        std::vector<TensorShape> in_shapes;
+        std::vector<TensorShape> out_shapes;
         std::vector<int> inIndexs;
         std::vector<int> outIndexs;
+        //DType *extradata;
         //quantized_uint8 needed for weights & inputs
         int weights_zero_point;
         float weights_scale;
@@ -169,7 +207,7 @@ namespace BrixLab
         //convolution weights
         DType *conv_weights;
         DType *conv_bias;
-        
+        bool fused_ops;
         FusedActivation fused_act_type;
         //deconvolution weights
         DType *transposed_weights;
@@ -191,23 +229,16 @@ namespace BrixLab
         PaddingType pooling_padType;
         int p_kernelsX, p_kernelsY;
         int p_stridesX, p_stridesY;
-        int p_paddingX, p_paddingY;
         int p_dilatedX, p_dilatedY;
-
         //innerproducts params
         float alpha, beta;
         DType *innerWeights;
         DType *innerBias;
-
         //concat params
-        int *concat_index;
-        int concat_num;
         int concat_axis;
-
         //Eltwise_SUM params
         int *sum_index;
         int sum_num;
-        
         EltwiseType eleType;
         //resample(resizedBilinar) layer
         float adjust_width_scale;
@@ -247,11 +278,11 @@ namespace BrixLab
         int fatureSize;
         int weightSize;
         int biasSize;
-        int layer_h;
-        int layer_w;
-        int layer_c;
-        int layer_n;
-        OP_type op_type;            
+        std::vector<TensorShape> in_shapes;
+        std::vector<TensorShape> out_shapes;
+        OP_type op_type;
+        std::vector<int>inputs;
+        std::vector<int>outputs;            
         
         dnnl::memory::dims top_shape;
         dnnl::memory layer_top_memory;
@@ -276,10 +307,15 @@ namespace BrixLab
         dnnl::memory::dims conv_paddingL;
         dnnl::memory::dims conv_paddingR;
         dnnl::convolution_forward::primitive_desc conv_pdesc;
+        dnnl::post_ops conv_ops;
+        dnnl:: primitive_attr conv_attr;
+        Post_OPs_Param conv_post_op;
         // deconvolution(transposed convolution) layer & param
         dnnl::memory::dims deconv_strides;
         dnnl::memory::dims deconv_paddingL, deconv_paddingR;
         dnnl::deconvolution_forward::primitive_desc deconv_pdesc;
+        dnnl::post_ops deconv_ops;
+        dnnl::primitive_attr deconv_attr;
         
         // batchnorm layer
         dnnl::memory::dims batchnorm_scale_shift_shape;
@@ -290,44 +326,51 @@ namespace BrixLab
         dnnl::memory batchnorm_variance_memory;
 
         //pooling layer
-        int p_dialiated;
+        bool p_dialiated;
         dnnl::algorithm pooling_type;
         dnnl::memory::dims pooling_kernel;
         dnnl::memory::dims pooling_strides;
-        dnnl::memory::dims pooling_padding;
+        dnnl::memory::dims pooling_paddingL;
+        dnnl::memory::dims pooling_paddingR;
         dnnl::memory::dims pooling_dialiate;
         // pooling with dialated
-
         dnnl::pooling_v2_forward::primitive_desc pooling_pdesc;
         // pooling without dialated
-        
         dnnl::pooling_forward::primitive_desc pooling_pdesc_without_d;
 
         // concat layer
-        int *concat_index;
+        bool inputset;
         int concat_num;
         int concat_axis;
         std::vector<dnnl::memory::desc> concat_bottom_md;
         std::vector<dnnl::memory> concat_bottom_memory;
         dnnl::concat::primitive_desc concat_pdesc;
-        // eltwise_sum layer
-        int *sum_index;
+        // multi inputsum layer
         int sum_num;
-        std::vector<DType> sum_scale;
+        std::vector<float> sum_scale;
         std::vector<dnnl::memory> sum_bottom_memory;
         std::vector<dnnl::memory::desc> sum_bottom_md;
         dnnl::sum::primitive_desc sum_pdesc;
 
-        // activation layer
+        // activation(elementwise) layer
         dnnl::algorithm activate_type;
         dnnl::eltwise_forward::primitive_desc eltwise_pdesc;
         float alpha, beta;
+
+        //binary op layer
+        dnnl::algorithm binary_type;
+        std::vector<dnnl::memory::desc> binary_md;
+        std::vector<dnnl::memory> binary_memory;
+        dnnl::binary::primitive_desc binary_pdesc;
 
         // resampleing layer
         float adjust_scale;
         dnnl::resampling_forward::primitive_desc resample_pdesc;
 
         //inner-product layer
+        dnnl::post_ops fc_ops;
+        dnnl:: primitive_attr fc_attr;
+        Post_OPs_Param fc_post_op;
         dnnl::inner_product_forward::primitive_desc inner_pdesc;
 
         // common layer
@@ -588,6 +631,9 @@ namespace BrixLab
     }
     dnnl::algorithm get_op_mapped_pooling_type(PoolingType type);
     dnnl::algorithm get_op_mapped_activition_type(activitionType type);
+    dnnl::algorithm get_op_mapped_binary_type(BinaryOpOperationType type);
+    void checK_equal_dims(const dnnl::memory::dims &A_Shape, const dnnl::memory::dims &B_Shape);
+    void check_inputs_shape(const std::vector<TensorShape> &inputs);
     template<typename DType> void graph_insert(graphSet<DType> &g_state, layerNode<DType> *node);
 } // namespace BrixLab
 

@@ -31,7 +31,12 @@ namespace BrixLab
         const int kw         = weightShape[2];
         const int ci         = weightShape[3];
         const int weightSize = co * kh * kw * ci;
-
+        dstOp->fused_ops = false;
+        dstOp->in_shapes.resize(1);
+        dstOp->out_shapes.resize(1);
+        // input shape
+        const int inshapeindex  = tfliteOp->inputs[0];
+        
         if (quantizedModel) {
             dstOp->quantized_type = BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED;
             dstOp->op_type = BrixLab::OP_type::CONVOLUTION;
@@ -84,8 +89,8 @@ namespace BrixLab
 
             // default
             dstOp->groups   = 1;
-            dstOp->dilateX = tfliteConvOption->dilation_w_factor;
-            dstOp->dilateY = tfliteConvOption->dilation_h_factor;
+            dstOp->dilateX = tfliteConvOption->dilation_w_factor - 1;
+            dstOp->dilateY = tfliteConvOption->dilation_h_factor - 1;
             //conv2dParamQuan->depthMultiplier = 1;
 
             // stride
@@ -119,7 +124,8 @@ namespace BrixLab
                 dstOp->quantized_bias = (int32_t*)xcalloc(co, sizeof(int32_t));
                 ::memcpy(dstOp->quantized_bias, biasData.data(), sizeof(int32_t) * co);
             }
-            dstOp->fused_act_type = (BrixLab::FusedActivation)tfliteConvOption->fused_activation_function;
+            dstOp->fused_ops        = true;
+            dstOp->fused_act_type   = (BrixLab::FusedActivation)tfliteConvOption->fused_activation_function;
         } else {
             dstOp->quantized_type = BrixLab::QUANITIZED_TYPE::FLOAT32_REGULAR;
             dstOp->op_type = BrixLab::OP_type::CONVOLUTION;
@@ -152,8 +158,8 @@ namespace BrixLab
             dstOp->inChannel    = ci;
             dstOp->k_w          = kw;
             dstOp->k_h          = kh;
-            dstOp->dilateX      = tfliteConvOption->dilation_w_factor;
-            dstOp->dilateY      = tfliteConvOption->dilation_h_factor;
+            dstOp->dilateX      = tfliteConvOption->dilation_w_factor - 1;
+            dstOp->dilateY      = tfliteConvOption->dilation_h_factor - 1;
             dstOp->stridesX     = tfliteConvOption->stride_w;
             dstOp->stridesY     = tfliteConvOption->stride_h;
             dstOp->padMode      = BrixLab::PaddingType::PaddingSAME;
@@ -216,6 +222,7 @@ namespace BrixLab
         const int kw         = weightShape[2];
         const int ci         = weightShape[3];
         const int weightSize = co * kh * kw * ci;
+        dstOp->fused_ops     = false;
         // weight
         auto originalWeightPtr = reinterpret_cast<const DType*>(tfliteModelBuffer[weightTensor->buffer]->data.data());
         dstOp->transposed_weights = (DType*)xcalloc(weightSize, sizeof(DType));
@@ -237,8 +244,8 @@ namespace BrixLab
         dstOp->inChannel = ci;
         dstOp->k_w       = kw;
         dstOp->k_h       = kh;
-        dstOp->dilateX   = 1;
-        dstOp->dilateY   = 1;
+        dstOp->dilateX   = 1 - 1;
+        dstOp->dilateY   = 1 - 1;
         dstOp->stridesX  = tfliteConvOption->stride_w;
         dstOp->stridesY  = tfliteConvOption->stride_h;
 
@@ -284,7 +291,7 @@ namespace BrixLab
         const auto in_shape     = in_tensor->shape;
         const int in_size       = in_shape.size();
         LOG_CHECK(in_size == 2 || in_size == 4, "Fully_Connect Input")<<"tflite Fully Connect Input Shape Error";
-        DataShape data_shape;
+        TensorShape data_shape;
         data_shape.Batch    = in_shape[0];
         data_shape.Height   = in_shape[1];
         if(in_size == 4){
@@ -306,9 +313,10 @@ namespace BrixLab
         const auto out_shape    = out_tensor->shape;
         const int out_size      = out_shape.size();
         LOG_CHECK(out_size == 2, "Fully_Connect Output")<<"tflite Fully Connect Output Shape Error";
-        DataShape outdata_shape;
+        TensorShape outdata_shape;
         outdata_shape.Batch     = out_shape[0];
         outdata_shape.Channel   = out_shape[1];
+        dstOp->fused_ops        = false;
 
         if(quantizedModel){
             dstOp->quantized_type = BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED;
@@ -416,6 +424,7 @@ namespace BrixLab
         const int ci                 = weightShape[3];
         int weightSize         = kh * kw * ci;
         const auto& tfliteConvOption = tfliteOp->builtin_options.AsDepthwiseConv2DOptions();
+        dstOp->fused_ops             = false;
         if (quantizedModel) {
             dstOp->quantized_type    = BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED;
             dstOp->op_type           = BrixLab::OP_type::CONVOLUTION;
@@ -442,8 +451,8 @@ namespace BrixLab
             dstOp->k_in       = ci;
 
             // default
-            dstOp->dilateX = tfliteConvOption->dilation_w_factor;
-            dstOp->dilateY = tfliteConvOption->dilation_h_factor;
+            dstOp->dilateX = tfliteConvOption->dilation_w_factor - 1;
+            dstOp->dilateY = tfliteConvOption->dilation_h_factor - 1;
 
             int depthMultiplier = tfliteConvOption->depth_multiplier;
             dstOp->k_c       = depthMultiplier * dstOp->k_in;
@@ -478,6 +487,7 @@ namespace BrixLab
                 LOG_CHECK( cii == ci, "CHECK biasData size") << "Bias Data ERROR";
                 dstOp->quantized_bias = (int32_t*) biasData.data();
             }
+            dstOp->fused_ops      = true;
             dstOp->fused_act_type = static_cast<BrixLab::FusedActivation>(tfliteConvOption->fused_activation_function);
         } else {
             dstOp->quantized_type    = BrixLab::QUANITIZED_TYPE::FLOAT32_REGULAR;
@@ -518,8 +528,8 @@ namespace BrixLab
             dstOp->stridesX  = tfliteConvOption->stride_w;
             dstOp->stridesY  = tfliteConvOption->stride_h;
             // default
-            dstOp->dilateX = tfliteConvOption->dilation_w_factor;
-            dstOp->dilateY = tfliteConvOption->dilation_h_factor;           
+            dstOp->dilateX = tfliteConvOption->dilation_w_factor - 1;
+            dstOp->dilateY = tfliteConvOption->dilation_h_factor - 1;
             dstOp->padMode = BrixLab::PaddingType::PaddingVALID;
             if (tfliteConvOption->padding == tflite::Padding_SAME) {
                 dstOp->padMode = BrixLab::PaddingType::PaddingSAME;
@@ -634,9 +644,9 @@ namespace BrixLab
     template<typename DType>
     OP_type AddTflite<DType>::opType(bool quantizedModel){
         if(quantizedModel){
-            return BrixLab::OP_type::ELTWISE;
+            return BrixLab::OP_type::BINARY_OP;
         }else{
-            return BrixLab::OP_type::ELTWISE;
+            return BrixLab::OP_type::BINARY_OP;
         }
     }
 
@@ -646,9 +656,10 @@ namespace BrixLab
                         const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                         const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, bool quantizedModel){
         const auto& addOption = tfliteOp->builtin_options.AsAddOptions();
+        dstOp->fused_ops      = false;
         if (quantizedModel) {
-            dstOp->quantized_type    = BrixLab::QUANITIZED_TYPE::FLOAT32_REGULAR;
-            dstOp->op_type           = BrixLab::OP_type::ELTWISE;
+            dstOp->quantized_type    = BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED;
+            dstOp->op_type           = BrixLab::OP_type::BINARY_OP;
             
             LOG_CHECK(tfliteOp->inputs.size() == 2, "OP ADD INPUT SIZE") << "tflite Reshape input ERROR";
 
@@ -670,13 +681,14 @@ namespace BrixLab
             dstOp->outputs_zero_point                = outputTensor->quantization->zero_point[0];
             dstOp->outputs_zero_point                = outputTensor->quantization->scale[0];
 
+            dstOp->fused_ops                         = true;
             dstOp->fused_act_type                    = static_cast<BrixLab::FusedActivation>(addOption->fused_activation_function);
 
         } else {
             LOG_CHECK(addOption->fused_activation_function == tflite::ActivationFunctionType_NONE, "CHECK the Fused activation Func")
                                                         << "BinaryOP Should not has fused_activation_function";
             dstOp->quantized_type    = BrixLab::QUANITIZED_TYPE::FLOAT32_REGULAR;
-            dstOp->op_type           = BrixLab::OP_type::ELTWISE;
+            dstOp->op_type           = BrixLab::OP_type::BINARY_OP;
         }
     }
     INSTANEC_OP_CONVERTER(AddTflite);
@@ -699,6 +711,7 @@ namespace BrixLab
                         const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                         const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, bool quantizedModel){
         const auto& tfliteConcatOption = tfliteOp->builtin_options.AsConcatenationOptions();
+        dstOp->fused_ops               = false;
         if (quantizedModel) {
             dstOp->quantized_type         = BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED;
             dstOp->op_type                = BrixLab::OP_type::CONCAT;
@@ -715,6 +728,7 @@ namespace BrixLab
             const auto& outputTensor                = tfliteTensors[outputIndex];
             dstOp->outputs_zero_point         = outputTensor->quantization->zero_point[0];
             dstOp->outputs_scale              = outputTensor->quantization->scale[0];
+            dstOp->fused_ops                  = true;
             dstOp->fused_act_type             = static_cast<BrixLab::FusedActivation>(tfliteConcatOption->fused_activation_function);
         } else {
             LOG_CHECK(tfliteConcatOption->fused_activation_function == tflite::ActivationFunctionType_NONE, "NO Fused activation Function")
@@ -790,7 +804,22 @@ namespace BrixLab
                         const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
                         const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                         const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, bool quantizedModel){
-        ;
+        auto code = tfliteOpSet[tfliteOp->opcode_index]->builtin_code;
+        if (BuiltinOperator_RELU == code) {
+            dstOp->activate_type        = BrixLab::activitionType::ReLU;
+            dstOp->alpha                = 0.f;
+            dstOp->beta                 = 1.f;
+        } else if (BuiltinOperator_RELU6 == code) {
+            dstOp->activate_type        = BrixLab::activitionType::ReLU;
+            dstOp->alpha                = 0.f;
+            dstOp->beta                 = 6.f;
+        }else if (BuiltinOperator_HARD_SWISH == code) {
+            dstOp->activate_type        = BrixLab::activitionType::SWISH;
+            dstOp->alpha                = 1.f;//待定
+            dstOp->beta                 = 0.f;
+        } else {
+            LOG(FATAL_ERROR, "no support other Relu ops");
+        }
     }
     INSTANEC_OP_CONVERTER(ReluTflite);
     REGISTER_CONVERTER(ReluTflite<float>, float, BuiltinOperator_RELU);
@@ -826,7 +855,7 @@ namespace BrixLab
             // input
             const int inputIndex                = tfliteOp->inputs[0];
             const auto& inputTensor             = tfliteTensors[inputIndex];
-            dstOp->softmax_inputscale    = inputTensor->quantization->scale[0];
+            dstOp->softmax_inputscale           = inputTensor->quantization->scale[0];
         } else {
             dstOp->quantized_type    = BrixLab::QUANITIZED_TYPE::FLOAT32_REGULAR;
             dstOp->op_type           = BrixLab::OP_type::SOFTMAX;
@@ -872,6 +901,7 @@ namespace BrixLab
             }
         }
         #endif
+        dstOp->op_type      = BrixLab::OP_type::REDUCTION;
         switch(tfliteOpSet[tfliteOp->opcode_index]->builtin_code){
             case tflite::BuiltinOperator_SUM:{
                 dstOp->reduction_type = BrixLab::ReductionType::ReductionType_SUM;
@@ -885,10 +915,6 @@ namespace BrixLab
                 dstOp->reduction_type = BrixLab::ReductionType::ReductionType_MINIMUM;
                 break;
             }
-            case tflite::BuiltinOperator_REDUCE_ANY:{
-                dstOp->reduction_type = BrixLab::ReductionType::ReductionType_ANY;
-                break;
-            }
             case tflite::BuiltinOperator_REDUCE_PROD:{
                 dstOp->reduction_type = BrixLab::ReductionType::ReductionType_PROD;
                 break;
@@ -898,7 +924,7 @@ namespace BrixLab
                 break;
             }
             default:{
-                LOG(FATAL_ERROR, "no support reduction type") << "MNN Converter Not Supported!!! Reduction Op: "
+                LOG(FATAL_ERROR, "no support reduction type") << "onednn Converter Not Supported!!! Reduction Op: "
                         << tfliteOpSet[tfliteOp->opcode_index]->custom_code;
             }
         }
@@ -934,9 +960,23 @@ namespace BrixLab
                         const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
                         const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                         const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, bool quantizedModel){
+        dstOp->op_type  = BrixLab::OP_type::BINARY_OP;
         switch (tfliteOpSet[tfliteOp->opcode_index]->builtin_code) {
-            case tflite::BuiltinOperator_POW: {
-                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_POW;
+            case tflite::BuiltinOperator_ADD: {
+                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_ADD;
+                break;
+            }
+            case tflite::BuiltinOperator_SUB: {
+                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_SUB;
+                break;
+            }
+            case BuiltinOperator_MUL:
+            case BuiltinOperator_LOGICAL_AND: {
+                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_MUL;
+                break;
+            }
+            case tflite::BuiltinOperator_DIV: {
+                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_DIV;
                 break;
             }
             case tflite::BuiltinOperator_MAXIMUM: {
@@ -947,69 +987,13 @@ namespace BrixLab
                 dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_MINIMUM;
                 break;
             }
-            case tflite::BuiltinOperator_LESS: {
-                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_LESS;
-                break;
-            }
-            case tflite::BuiltinOperator_GREATER_EQUAL: {
-                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_GREATER_EQUAL;
-                break;
-            }
-            case tflite::BuiltinOperator_ADD: {
-                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_ADD;
-                break;
-            }
-            case tflite::BuiltinOperator_SUB: {
-                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_SUB;
-                break;
-            }
-            case tflite::BuiltinOperator_FLOOR_DIV: {
-                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_FLOORDIV;
-                break;
-            }
-            case tflite::BuiltinOperator_DIV: {
-                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_DIV;
-                break;
-            }
-            case tflite::BuiltinOperator_FLOOR_MOD: {
-                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_FLOORMOD;
-                break;
-            }
-            case tflite::BuiltinOperator_LESS_EQUAL: {
-                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_LESS_EQUAL;
-                break;
-            }
-            case tflite::BuiltinOperator_GREATER: {
-                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_GREATER;
-                break;
-            }
-            case tflite::BuiltinOperator_EQUAL: {
-                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_EQUAL;
-                break;
-            }
-            case tflite::BuiltinOperator_NOT_EQUAL:{
-                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_NOTEQUAL;
-                break;
-            }
-            case tflite::BuiltinOperator_SQUARED_DIFFERENCE: {
-                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_SquaredDifference;
-                break;
-            }
-            case BuiltinOperator_MUL:
-            case BuiltinOperator_LOGICAL_AND: {
-                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_MUL;
-                break;
-            }
             default: {
-                LOG(FATAL_ERROR, "BinaryOp not supported") << "MNN Converter Not Supported!!! BinaryOp:"
+                LOG(FATAL_ERROR, "BinaryOp not supported") << "onednn Converter Not Supported!!! BinaryOp:"
                                     << tfliteOpSet[tfliteOp->opcode_index]->custom_code;
             }
         }
     }
     INSTANEC_OP_CONVERTER(BinaryTflite);
-
-    REGISTER_CONVERTER(BinaryTflite<float>, float, BuiltinOperator_POW);
-    REGISTER_CONVERTER(BinaryTflite<uint8_t>, uint8_t, BuiltinOperator_POW);
 
     //REGISTER_CONVERTER(BinaryTflite<float>, float, BuiltinOperator_ADD);
     //REGISTER_CONVERTER(BinaryTflite<uint8_t>, uint8_t, BuiltinOperator_ADD);
@@ -1028,33 +1012,6 @@ namespace BrixLab
 
     REGISTER_CONVERTER(BinaryTflite<float>, float, BuiltinOperator_MINIMUM);
     REGISTER_CONVERTER(BinaryTflite<uint8_t>, uint8_t, BuiltinOperator_MINIMUM);
-
-    REGISTER_CONVERTER(BinaryTflite<float>, float, BuiltinOperator_LESS);
-    REGISTER_CONVERTER(BinaryTflite<uint8_t>, uint8_t, BuiltinOperator_LESS);
-
-    REGISTER_CONVERTER(BinaryTflite<float>, float, BuiltinOperator_GREATER_EQUAL);
-    REGISTER_CONVERTER(BinaryTflite<uint8_t>, uint8_t, BuiltinOperator_GREATER_EQUAL);
-
-    REGISTER_CONVERTER(BinaryTflite<float>, float, BuiltinOperator_FLOOR_DIV);
-    REGISTER_CONVERTER(BinaryTflite<uint8_t>, uint8_t, BuiltinOperator_FLOOR_DIV);
-
-    REGISTER_CONVERTER(BinaryTflite<float>, float, BuiltinOperator_FLOOR_MOD);
-    REGISTER_CONVERTER(BinaryTflite<uint8_t>, uint8_t, BuiltinOperator_FLOOR_MOD);
-
-    REGISTER_CONVERTER(BinaryTflite<float>, float, BuiltinOperator_LESS_EQUAL);
-    REGISTER_CONVERTER(BinaryTflite<uint8_t>, uint8_t, BuiltinOperator_LESS_EQUAL);
-
-    REGISTER_CONVERTER(BinaryTflite<float>, float, BuiltinOperator_GREATER);
-    REGISTER_CONVERTER(BinaryTflite<uint8_t>, uint8_t, BuiltinOperator_GREATER);
-
-    REGISTER_CONVERTER(BinaryTflite<float>, float, BuiltinOperator_EQUAL);
-    REGISTER_CONVERTER(BinaryTflite<uint8_t>, uint8_t, BuiltinOperator_EQUAL);
-
-    REGISTER_CONVERTER(BinaryTflite<float>, float, BuiltinOperator_NOT_EQUAL);
-    REGISTER_CONVERTER(BinaryTflite<uint8_t>, uint8_t, BuiltinOperator_NOT_EQUAL);
-
-    REGISTER_CONVERTER(BinaryTflite<float>, float, BuiltinOperator_SQUARED_DIFFERENCE);
-    REGISTER_CONVERTER(BinaryTflite<uint8_t>, uint8_t, BuiltinOperator_SQUARED_DIFFERENCE);
 
     REGISTER_CONVERTER(BinaryTflite<float>, float, BuiltinOperator_LOGICAL_AND);
     REGISTER_CONVERTER(BinaryTflite<uint8_t>, uint8_t, BuiltinOperator_LOGICAL_AND);

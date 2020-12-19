@@ -11,6 +11,6 @@ int main(){
     int inWidth = 14;
     std::vector<float> inData(inBatch*inChannel*inHeight*inWidth);
     float * data = inData.data();
-    BrixLab::Test_Deconvulution(data);
+    BrixLab::Test_Convulution(data);
     return 0;
 }

@@ -8,16 +8,7 @@
 typedef std::unique_ptr<tflite::QuantizationParametersT> tfliteQuanParam;
 namespace BrixLab
 {
-    enum DataType {
-        DataType_DT_INVALID = 0,
-        DataType_DT_FLOAT = 1,
-        DataType_DT_DOUBLE = 2,
-        DataType_DT_INT32 = 3,
-        DataType_DT_UINT8 = 4,
-        DataType_DT_INT16 = 5,
-        DataType_DT_INT8 = 6,
-    };
-    static DataType tflite_dataTypeMap(tflite::TensorType type){
+    static DataType get_tensorDataType_tflite(tflite::TensorType type){
         switch (type) {
             case tflite::TensorType_FLOAT32:
                 return DataType_DT_FLOAT;
@@ -52,7 +43,7 @@ namespace BrixLab
 
     template<typename DType>
     bool convertDataFormatTflite(const DType* src, DType* dst, int KH, int KW, int CI, int CO) {
-        LOG_CHECK(KH > 0, "KH>0")<<"KH <= 0";
+        LOG_CHECK(KH > 0, "KH>0")/* constant-expression */<<"KH <= 0";
         LOG_CHECK(KW > 0, "KW>0")<<"KW <= 0";
         LOG_CHECK(CI > 0, "KI>0")<<"CI <= 0";
         LOG_CHECK(CO > 0, "KO>0")<<"KO <= 0";
@@ -70,13 +61,6 @@ namespace BrixLab
 
         return true;
     }
-
-    typedef struct _DataShape{
-        int Batch;
-        int Channel;
-        int Height;
-        int Width;
-    }DataShape;
 
     #define ARGSMAX(a, b) ((a) >= (b) ? (a): (b))
     #define ARGSMIN(a, b) ((a) >= (b) ? (b): (a))
@@ -120,6 +104,42 @@ namespace BrixLab
             break;
         }
         return pool_type;
+    }
+
+    inline Post_OPs_Param get_posts_opsMap(FusedActivation fused_activation){
+        Post_OPs_Param fused_op;
+        switch (fused_activation)
+        {
+        case Fused_kTfLiteActRelu1:
+            fused_op.posts_op   = dnnl::algorithm::eltwise_relu;
+            fused_op.alpha      = 0.f;
+            fused_op.beta       = 0.f;
+            fused_op.scale      = 1.f;
+            break;
+        case Fused_kTfLiteActRelu6:
+            fused_op.posts_op   = dnnl::algorithm::eltwise_relu;
+            fused_op.alpha      = 0.f;
+            fused_op.beta       = 6.f;
+            fused_op.scale      = 1.f;
+            break;
+
+        case Fused_kTfLiteActSigmoid:
+            fused_op.posts_op   = dnnl::algorithm::eltwise_logistic;
+            fused_op.alpha      = 0.f;
+            fused_op.beta       = 0.f;
+            fused_op.scale      = 1.f;
+            break;
+        case Fused_kTfLiteActTanh:
+            fused_op.posts_op   = dnnl::algorithm::eltwise_tanh;
+            fused_op.alpha      = 0.f;
+            fused_op.beta       = 0.f;
+            fused_op.scale      = 1.f;
+            break;
+        default:
+            break;
+        }
+
+        return fused_op;
     }
 
 } // namespace BrixLab

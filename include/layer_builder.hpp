@@ -80,6 +80,11 @@ namespace BrixLab
     template<typename DType>
     layerNode<DType> OP_activation_layer_setup(const layerWeightsParam<DType> &param);
 
+    template<typename DType>
+    void OP_binary_inference_forward(layerNode<DType> *node, graphSet<DType> &g_net);
+    template<typename DType>
+    layerNode<DType> OP_binary_layer_setup(const layerWeightsParam<DType> &param);
+
     
     template<typename DType>
     class NetGraph{
