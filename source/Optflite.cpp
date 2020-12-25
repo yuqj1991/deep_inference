@@ -12,20 +12,20 @@ namespace BrixLab
         }
     }
     template<typename DType>
-    void Conv2Dtflite<DType>::run(layerWeightsParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
+    void Conv2Dtflite<DType>::run(strParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
                         const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
                         const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                         const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, 
                         bool quantizedModel){
         const int inputSize = tfliteOp->inputs.size();
-        LOG_CHECK(inputSize == 2 || inputSize == 3, "varify conv2D input size") << "tflite Conv2D input ERROR!";
+        LOG_CHECK(inputSize == 2 || inputSize == 3) << "tflite Conv2D input size ERROR!";
         const auto& tfliteConvOption = tfliteOp->builtin_options.AsConv2DOptions();
         // weight index
         const int weightIndex    = tfliteOp->inputs[1];
         const auto& weightTensor = tfliteTensors[weightIndex];
         // co kh kw ci
         const auto& weightShape = weightTensor->shape;
-        LOG_CHECK(weightShape.size() == 4, "varify conv2D weights shape size") << "Conv2D weight ERROR!";
+        LOG_CHECK(weightShape.size() == 4) << "Conv2D weight size ERROR!";
         const int co         = weightShape[0];
         const int kh         = weightShape[1];
         const int kw         = weightShape[2];
@@ -34,8 +34,24 @@ namespace BrixLab
         dstOp->fused_ops = false;
         dstOp->in_shapes.resize(1);
         dstOp->out_shapes.resize(1);
-        // input shape
-        const int inshapeindex  = tfliteOp->inputs[0];
+        {
+            // input shape
+            const int inshapeindex      = tfliteOp->inputs[0];
+            const auto inshape          = tfliteTensors[inshapeindex]->shape;
+            dstOp->in_shapes[0].Batch   = inshape[0];
+            dstOp->in_shapes[0].Height  = inshape[1];
+            dstOp->in_shapes[0].Width   = inshape[2];
+            dstOp->in_shapes[0].Channel = inshape[3];
+            dstOp->in_shapes[0].format  = BrixLab::TENSOR_FORMATE::NHWC;
+            //output shape
+            const int outshapeindex         = tfliteOp->outputs[0];
+            const auto outshape             = tfliteTensors[outshapeindex]->shape;
+            dstOp->out_shapes[0].Batch      = outshape[0];
+            dstOp->out_shapes[0].Height     = outshape[1];
+            dstOp->out_shapes[0].Width      = outshape[2];
+            dstOp->out_shapes[0].Channel    = outshape[3];
+            dstOp->out_shapes[0].format     = BrixLab::TENSOR_FORMATE::NHWC;
+        }
         
         if (quantizedModel) {
             dstOp->quantized_type = BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED;
@@ -103,24 +119,27 @@ namespace BrixLab
                 dstOp->padMode = BrixLab::PaddingType::PaddingVALID;
             }
             // weight
-            LOG_CHECK(weightTensor->type == tflite::TensorType_UINT8, 
-                                        "check conv2D weights tensor type") << "Data type ERROR";
+            LOG_CHECK(weightTensor->type == tflite::TensorType_UINT8) << "Data type ERROR";
             // nhwc->hwcn
             int out_size = kh * kw * ci;
             int in_size  = co;
             auto originalWeightPtr = reinterpret_cast<const DType*>(tfliteModelBuffer[weightTensor->buffer]->data.data());
             dstOp->conv_weights = (DType*)xcalloc(in_size * out_size, sizeof(DType));
-            convertDataFormatTflite(originalWeightPtr, dstOp->conv_weights, kh, kw, ci, co);
+            if(dstOp->in_shapes[0].format == TENSOR_FORMATE::NCHW){
+                LOG_CHECK(convertDataFormatTflite(originalWeightPtr, dstOp->conv_weights, kh, kw, ci, co));
+            }else{
+                ::memcpy(dstOp->conv_weights, originalWeightPtr, weightSize);
+            }
             
             dstOp->hasBias = (inputSize == 3);
-            LOG_CHECK(dstOp->hasBias==true, "CHECK the bias flags") << "the bias flags is false";
+            LOG_CHECK(dstOp->hasBias==true) << "the bias flags is false";
             const auto& biasTensor = tfliteTensors[tfliteOp->inputs[2]];
             if (inputSize == 3) {
-                LOG_CHECK(biasTensor->type == tflite::TensorType_INT32, "CHECK the bias tensor type") << "Bias Type ERROR";
+                LOG_CHECK(biasTensor->type == tflite::TensorType_INT32) << "Bias Type ERROR";
                 const auto& biasData                = tfliteModelBuffer[biasTensor->buffer]->data;
                 dstOp->bias_zero_point = biasTensor->quantization->zero_point[0];
                 dstOp->bias_scale     = biasTensor->quantization->scale[0];
-                LOG_CHECK(biasData.size() == 1, "CHECK the biasDias shape") << "Bias Data ERROR";
+                LOG_CHECK(biasData.size() == 1) << "Bias Data shape ERROR";
                 dstOp->quantized_bias = (int32_t*)xcalloc(co, sizeof(int32_t));
                 ::memcpy(dstOp->quantized_bias, biasData.data(), sizeof(int32_t) * co);
             }
@@ -132,10 +151,15 @@ namespace BrixLab
             dstOp->conv_weights = (DType*)xcalloc(weightSize, sizeof(DType));
             // weight
             auto originalWeightPtr = reinterpret_cast<const DType*>(tfliteModelBuffer[weightTensor->buffer]->data.data());
-            convertDataFormatTflite(originalWeightPtr, dstOp->conv_weights, kh, kw, ci, co);
+            if(dstOp->in_shapes[0].format == TENSOR_FORMATE::NCHW){
+                LOG_CHECK(convertDataFormatTflite(originalWeightPtr, dstOp->conv_weights, kh, kw, ci, co));
+            }else{
+                ::memcpy(dstOp->conv_weights, originalWeightPtr, weightSize);
+            }
             // bias
             dstOp->conv_bias = (DType*)xcalloc(co, sizeof(DType));
             if (inputSize == 3) {
+                dstOp->hasBias = (inputSize == 3);
                 const auto& biasTensor = tfliteTensors[tfliteOp->inputs[2]];
                 auto biasDataPtr       = reinterpret_cast<const DType*>(tfliteModelBuffer[biasTensor->buffer]->data.data());
                 ::memcpy(dstOp->conv_bias, biasDataPtr, sizeof(DType) * co);
@@ -149,13 +173,13 @@ namespace BrixLab
             } else if (acticationFun == tflite::ActivationFunctionType_RELU6) {
                 dstOp->relu6 = true;
             } else if (acticationFun > tflite::ActivationFunctionType_NONE) {
-                LOG(FATAL_ERROR, "ONEDNN_TYPE SUPPORTED") << 
+                LOG(FATAL_ERROR) << 
                             "ONEDNN Convolution do not Support fused_activation_function: " << acticationFun;
             }
 
             dstOp->groups       = 1;
             dstOp->k_c          = co;
-            dstOp->inChannel    = ci;
+            dstOp->k_in         = ci;
             dstOp->k_w          = kw;
             dstOp->k_h          = kh;
             dstOp->dilateX      = tfliteConvOption->dilation_w_factor - 1;
@@ -192,12 +216,12 @@ namespace BrixLab
     }
 
     template<typename DType>
-    void TransposedConv2Dtflite<DType>::run(layerWeightsParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
+    void TransposedConv2Dtflite<DType>::run(strParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
                                     const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
                                     const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                                     const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, 
                                     bool quantizedModel){
-        LOG_CHECK(!quantizedModel, "!quantizedModel") << "Transpose_Conv2D not support quantized model";
+        LOG_CHECK(!quantizedModel) << "Transpose_Conv2D not support quantized model";
         // 3|2 inputs: input tensor, weight, (bias)
         /*
         enum Padding : byte { SAME, VALID }
@@ -208,7 +232,7 @@ namespace BrixLab
         }
         */
         const int inputSize = tfliteOp->inputs.size();
-        LOG_CHECK(inputSize == 2 || inputSize == 3, "inputSize == 2 || inputSize == 3") << "tflite Tranposed_Conv2D input ERROR! ";
+        LOG_CHECK(inputSize == 2 || inputSize == 3) << "tflite Tranposed_Conv2D input ERROR! ";
         
         const auto& tfliteConvOption = tfliteOp->builtin_options.AsTransposeConvOptions();
         // weight index
@@ -216,19 +240,44 @@ namespace BrixLab
         const auto& weightTensor = tfliteTensors[weightIndex];
         // co kh kw ci
         const auto& weightShape = weightTensor->shape;
-        LOG_CHECK(weightShape.size() == 4, "weightShape.size() == 4") << "Transposed_Conv2D weight ERROR!";
+        LOG_CHECK(weightShape.size() == 4) << "Transposed_Conv2D weight ERROR!";
         const int co         = weightShape[0];
         const int kh         = weightShape[1];
         const int kw         = weightShape[2];
         const int ci         = weightShape[3];
         const int weightSize = co * kh * kw * ci;
         dstOp->fused_ops     = false;
+        {
+            dstOp->in_shapes.resize(1);
+            dstOp->out_shapes.resize(1);
+            // input shape
+            const int inshapeindex      = tfliteOp->inputs[0];
+            const auto inshape          = tfliteTensors[inshapeindex]->shape;
+            dstOp->in_shapes[0].Batch   = inshape[0];
+            dstOp->in_shapes[0].Height  = inshape[1];
+            dstOp->in_shapes[0].Width   = inshape[2];
+            dstOp->in_shapes[0].Channel = inshape[3];
+            dstOp->in_shapes[0].format  = BrixLab::TENSOR_FORMATE::NHWC;
+            //output shape
+            const int outshapeindex         = tfliteOp->outputs[0];
+            const auto outshape             = tfliteTensors[outshapeindex]->shape;
+            dstOp->out_shapes[0].Batch      = outshape[0];
+            dstOp->out_shapes[0].Height     = outshape[1];
+            dstOp->out_shapes[0].Width      = outshape[2];
+            dstOp->out_shapes[0].Channel    = outshape[3];
+            dstOp->out_shapes[0].format     = BrixLab::TENSOR_FORMATE::NHWC;
+        }
         // weight
         auto originalWeightPtr = reinterpret_cast<const DType*>(tfliteModelBuffer[weightTensor->buffer]->data.data());
         dstOp->transposed_weights = (DType*)xcalloc(weightSize, sizeof(DType));
-        convertDataFormatTflite(originalWeightPtr, dstOp->transposed_weights, kh, kw, ci, co);
+        if(dstOp->in_shapes[0].format == TENSOR_FORMATE::NCHW){
+            LOG_CHECK(convertDataFormatTflite(originalWeightPtr, dstOp->transposed_weights, kh, kw, ci, co));
+        }else{
+            ::memcpy(dstOp->transposed_weights, originalWeightPtr, weightSize);
+        }
         // bias
         if (inputSize == 3) {
+            dstOp->hasBias = (inputSize == 3);
             dstOp->transposed_bias = (DType*)xcalloc(co, sizeof(co));
             const auto& biasTensor = tfliteTensors[tfliteOp->inputs[2]];
             auto biasDataPtr       = reinterpret_cast<const DType*>(tfliteModelBuffer[biasTensor->buffer]->data.data());
@@ -241,7 +290,7 @@ namespace BrixLab
         dstOp->relu      = false;
         dstOp->groups    = 1;
         dstOp->k_c       = co;
-        dstOp->inChannel = ci;
+        dstOp->k_in      = ci;
         dstOp->k_w       = kw;
         dstOp->k_h       = kh;
         dstOp->dilateX   = 1 - 1;
@@ -277,32 +326,25 @@ namespace BrixLab
     }
 
     template<typename DType>
-    void FullConnectedTflite<DType>::run(layerWeightsParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
+    void FullConnectedTflite<DType>::run(strParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
                         const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
                         const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                         const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, 
                         bool quantizedModel){
         const int input_size = tfliteOp->inputs.size();
-        LOG_CHECK(input_size == 2 || input_size == 3, "input_size == 2 || input_size == 3") 
+        LOG_CHECK(input_size == 2 || input_size == 3) 
                                     << "tflite fully connected inputs error";
         // input data
         const auto in_index     = tfliteOp->inputs[0];
         const auto &in_tensor   = tfliteTensors[in_index];
         const auto in_shape     = in_tensor->shape;
         const int in_size       = in_shape.size();
-        LOG_CHECK(in_size == 2 || in_size == 4, "Fully_Connect Input")<<"tflite Fully Connect Input Shape Error";
-        TensorShape data_shape;
-        data_shape.Batch    = in_shape[0];
-        data_shape.Height   = in_shape[1];
-        if(in_size == 4){
-            data_shape.Width    = in_shape[2];
-            data_shape.Channel  = in_shape[3];  
-        }
+        LOG_CHECK(in_size == 2 || in_size == 4)<<"tflite Fully Connect Input Shape Error";
         // weight data
         const auto weights_index    = tfliteOp->inputs[1];
         const auto &weights_tensor  = tfliteTensors[weights_index];
         const auto weights_shape    = weights_tensor->shape;
-        LOG_CHECK(weights_shape.size() == 2, "weights_shape.size() == 2")
+        LOG_CHECK(weights_shape.size() == 2)
                     <<"FULLY CONNECTED Weights Shape Error";
         const int co    = weights_shape[0];
         const int ci    = weights_shape[1];
@@ -312,23 +354,34 @@ namespace BrixLab
         const auto &out_tensor  = tfliteTensors[out_index];
         const auto out_shape    = out_tensor->shape;
         const int out_size      = out_shape.size();
-        LOG_CHECK(out_size == 2, "Fully_Connect Output")<<"tflite Fully Connect Output Shape Error";
-        TensorShape outdata_shape;
-        outdata_shape.Batch     = out_shape[0];
-        outdata_shape.Channel   = out_shape[1];
+        LOG_CHECK(out_size == 2)<<"tflite Fully Connect Output Shape Error";
         dstOp->fused_ops        = false;
+        {
+            dstOp->in_shapes.resize(1);
+            dstOp->out_shapes.resize(1);
+            // input shape
+            const int inshapeindex          = tfliteOp->inputs[0];
+            const auto inshape              = tfliteTensors[inshapeindex]->shape;
+            dstOp->in_shapes[0].Batch       = inshape[0];
+            dstOp->in_shapes[0].Channel     = inshape[1];
+            if(inshape.size()==4){
+                dstOp->in_shapes[0].Batch   = inshape[0];
+                dstOp->in_shapes[0].Height  = inshape[1];
+                dstOp->in_shapes[0].Width   = inshape[2];
+                dstOp->in_shapes[0].Channel = inshape[3];
+            }
+            dstOp->in_shapes[0].format      = BrixLab::TENSOR_FORMATE::NHWC;
+            //output shape
+            const int outshapeindex         = tfliteOp->outputs[0];
+            const auto outshape             = tfliteTensors[outshapeindex]->shape;
+            dstOp->out_shapes[0].Batch      = outshape[0];
+            dstOp->out_shapes[0].Channel    = outshape[1];
+            dstOp->out_shapes[0].format     = BrixLab::TENSOR_FORMATE::NHWC;
+        }
 
         if(quantizedModel){
             dstOp->quantized_type = BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED;
             dstOp->op_type = BrixLab::OP_type::INNERPRODUCT;
-            dstOp->inHeight   = data_shape.Height;
-            dstOp->inWidth    = data_shape.Width;
-            dstOp->inBatch    = data_shape.Batch;
-            dstOp->inChannel  = data_shape.Channel;
-            dstOp->layer_h    = 1;
-            dstOp->layer_w    = 1;
-            dstOp->layer_c    = outdata_shape.Channel;
-            dstOp->layer_n    = outdata_shape.Batch;
             dstOp->k_c        = co;
             dstOp->k_in       = ci;
             dstOp->innerWeights = (DType *)xcalloc(weight_size, sizeof(DType));
@@ -339,14 +392,14 @@ namespace BrixLab
             }
             if(input_size == 3){
                 const auto& biasTensor = tfliteTensors[tfliteOp->inputs[2]];
-                LOG_CHECK(biasTensor->type == tflite::TensorType::TensorType_INT32, "Fully Connected bias Type")<<"Bias type ERROR";
+                LOG_CHECK(biasTensor->type == tflite::TensorType::TensorType_INT32)<<"Bias type ERROR";
                 dstOp->hasBias = true;
                 dstOp->quantized_bias = (int32_t *)xcalloc(co, sizeof(int32_t));
                 
                 const auto bias_index   = tfliteOp->inputs[2];
                 const auto &bias_tensor = tfliteTensors[bias_index];
                 const auto bias_shape   = bias_tensor->shape;
-                LOG_CHECK(bias_shape.size() == 1, "bias shape") << "Bias Shape ERROR";
+                LOG_CHECK(bias_shape.size() == 1) << "Bias Shape ERROR";
                 for(int ii = 0; ii < co; ii++){
                     dstOp->quantized_bias[ii] = tfliteModelBuffer[bias_tensor->buffer]->data[ii];
                 }
@@ -354,14 +407,6 @@ namespace BrixLab
         }else{
             dstOp->quantized_type = BrixLab::QUANITIZED_TYPE::FLOAT32_REGULAR;
             dstOp->op_type = BrixLab::OP_type::INNERPRODUCT;
-            dstOp->inHeight   = data_shape.Height;
-            dstOp->inWidth    = data_shape.Width;
-            dstOp->inBatch    = data_shape.Batch;
-            dstOp->inChannel  = data_shape.Channel;
-            dstOp->layer_h    = 1;
-            dstOp->layer_w    = 1;
-            dstOp->layer_c    = outdata_shape.Channel;
-            dstOp->layer_n    = outdata_shape.Batch;
             dstOp->k_c        = co;
             dstOp->k_in       = ci;
             dstOp->innerWeights = (DType *)xcalloc(weight_size, sizeof(DType));
@@ -372,14 +417,14 @@ namespace BrixLab
             }
             if(input_size == 3){
                 const auto& biasTensor = tfliteTensors[tfliteOp->inputs[2]];
-                LOG_CHECK(biasTensor->type == tflite::TensorType::TensorType_FLOAT32, "Fully Connected bias Type")<<"Bias type ERROR";
+                LOG_CHECK(biasTensor->type == tflite::TensorType::TensorType_FLOAT32)<<"Bias type ERROR";
                 dstOp->hasBias = true;
                 dstOp->innerBias = (DType *)xcalloc(co, sizeof(DType));
                 
                 const auto bias_index   = tfliteOp->inputs[2];
                 const auto &bias_tensor = tfliteTensors[bias_index];
                 const auto bias_shape   = bias_tensor->shape;
-                LOG_CHECK(bias_shape.size() == 1, "bias shape") << "Bias Shape ERROR";
+                LOG_CHECK(bias_shape.size() == 1) << "Bias Shape ERROR";
                 for(int ii = 0; ii < co; ii++){
                     dstOp->innerBias[ii] = tfliteModelBuffer[bias_tensor->buffer]->data[ii];
                 }
@@ -404,27 +449,47 @@ namespace BrixLab
     }
 
     template<typename DType>
-    void DepthConv2DTflite<DType>::run(layerWeightsParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
+    void DepthConv2DTflite<DType>::run(strParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
                         const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
                         const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                         const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, 
                         bool quantizedModel){
         // 3|2 inputs: input tensor, weight, (bias)
         const int inputSize = tfliteOp->inputs.size();
-        LOG_CHECK(inputSize == 2 || inputSize == 3, "Depthwise_Conv2D input size") << "tflite DepthiwiseConv2D input ERROR! ";
+        LOG_CHECK(inputSize == 2 || inputSize == 3) << "tflite DepthiwiseConv2D input ERROR! ";
         // weight index
         const int weightIndex    = tfliteOp->inputs[1];
         const auto& weightTensor = tfliteTensors[weightIndex];
         // co kh kw ci
         const auto& weightShape = weightTensor->shape;
-        LOG_CHECK(weightShape.size() == 4, "Depthwise_Conv2D weight shape") << "Depthwise_Conv2D weight ERROR!";
-        // const int co = weightShape[0];
+        LOG_CHECK(weightShape.size() == 4) << "Depthwise_Conv2D weight ERROR!";
+        //const int co                 = weightShape[0];
         const int kh                 = weightShape[1];
         const int kw                 = weightShape[2];
         const int ci                 = weightShape[3];
         int weightSize         = kh * kw * ci;
         const auto& tfliteConvOption = tfliteOp->builtin_options.AsDepthwiseConv2DOptions();
         dstOp->fused_ops             = false;
+        {
+            dstOp->in_shapes.resize(1);
+            dstOp->out_shapes.resize(1);
+            // input shape
+            const int inshapeindex      = tfliteOp->inputs[0];
+            const auto inshape          = tfliteTensors[inshapeindex]->shape;
+            dstOp->in_shapes[0].Batch   = inshape[0];
+            dstOp->in_shapes[0].Height  = inshape[1];
+            dstOp->in_shapes[0].Width   = inshape[2];
+            dstOp->in_shapes[0].Channel = inshape[3];
+            dstOp->in_shapes[0].format  = BrixLab::TENSOR_FORMATE::NHWC;
+            //output shape
+            const int outshapeindex         = tfliteOp->outputs[0];
+            const auto outshape             = tfliteTensors[outshapeindex]->shape;
+            dstOp->out_shapes[0].Batch      = outshape[0];
+            dstOp->out_shapes[0].Height     = outshape[1];
+            dstOp->out_shapes[0].Width      = outshape[2];
+            dstOp->out_shapes[0].Channel    = outshape[3];
+            dstOp->out_shapes[0].format     = BrixLab::TENSOR_FORMATE::NHWC;
+        }
         if (quantizedModel) {
             dstOp->quantized_type    = BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED;
             dstOp->op_type           = BrixLab::OP_type::CONVOLUTION;
@@ -440,27 +505,27 @@ namespace BrixLab
             dstOp->inputs_scale.push_back(inputTensor->quantization->scale[0]);
 
             // output
-            const int outputIndex    = tfliteOp->outputs[0];
-            const auto& outputTensor = tfliteTensors[outputIndex];
-            dstOp->outputs_zero_point                    = outputTensor->quantization->zero_point[0];
-            dstOp->outputs_scale                         = outputTensor->quantization->scale[0];
+            const int outputIndex                           = tfliteOp->outputs[0];
+            const auto& outputTensor                        = tfliteTensors[outputIndex];
+            dstOp->outputs_zero_point                       = outputTensor->quantization->zero_point[0];
+            dstOp->outputs_scale                            = outputTensor->quantization->scale[0];
 
             // kernel size
-            dstOp->k_w       = kw;
-            dstOp->k_h       = kh;
-            dstOp->k_in       = ci;
+            dstOp->k_w      = kw;
+            dstOp->k_h      = kh;
+            dstOp->k_in     = ci;
 
             // default
-            dstOp->dilateX = tfliteConvOption->dilation_w_factor - 1;
-            dstOp->dilateY = tfliteConvOption->dilation_h_factor - 1;
+            dstOp->dilateX  = tfliteConvOption->dilation_w_factor - 1;
+            dstOp->dilateY  = tfliteConvOption->dilation_h_factor - 1;
 
             int depthMultiplier = tfliteConvOption->depth_multiplier;
-            dstOp->k_c       = depthMultiplier * dstOp->k_in;
-            dstOp->groups    = depthMultiplier * dstOp->k_in;
-            weightSize                      *= depthMultiplier; 
+            dstOp->k_c          = depthMultiplier * dstOp->k_in;
+            dstOp->groups       = depthMultiplier * dstOp->k_in;
+            weightSize          *= depthMultiplier; 
             // stride
-            dstOp->stridesX  = tfliteConvOption->stride_w;
-            dstOp->stridesY  = tfliteConvOption->stride_h;
+            dstOp->stridesX     = tfliteConvOption->stride_w;
+            dstOp->stridesY     = tfliteConvOption->stride_h;
 
             const auto tflitePadMode = tfliteConvOption->padding;
             if (tflitePadMode == tflite::Padding_SAME) {
@@ -470,21 +535,25 @@ namespace BrixLab
             }
 
             // weight
-            LOG_CHECK(weightTensor->type == tflite::TensorType_UINT8, "weights tensor Type UINT8") << "weights Data type ERROR";
+            LOG_CHECK(weightTensor->type == tflite::TensorType_UINT8) << "weights Data type ERROR";
             dstOp->conv_weights = (DType *)xcalloc(weightSize, sizeof(DType));
             auto originalWeightPtr = reinterpret_cast<const DType*>(tfliteModelBuffer[weightTensor->buffer]->data.data());
-            convertDataFormatTflite(originalWeightPtr, dstOp->conv_weights, kh, kw, ci, depthMultiplier);
+            if(dstOp->in_shapes[0].format == TENSOR_FORMATE::NCHW){
+                LOG_CHECK(convertDataFormatTflite(originalWeightPtr, dstOp->conv_weights, kh, kw, ci, depthMultiplier));
+            }else{
+                ::memcpy(dstOp->conv_weights, originalWeightPtr, weightSize);
+            }
             dstOp->hasBias = (inputSize == 3);
             // have bias
             if (inputSize == 3) {
                 const auto& biasTensor = tfliteTensors[tfliteOp->inputs[2]];
-                LOG_CHECK(biasTensor->type == tflite::TensorType_INT32, "Bias Type INT32") << "Bias Type ERROR";
+                LOG_CHECK(biasTensor->type == tflite::TensorType_INT32) << "Bias Type ERROR";
                 const auto& biasData = tfliteModelBuffer[biasTensor->buffer]->data;
                 dstOp->bias_zero_point               = biasTensor->quantization->zero_point[0];
                 dstOp->bias_scale                    = biasTensor->quantization->scale[0];
                 auto shape = biasTensor->shape;
                 const int cii = biasData.size() / 4;
-                LOG_CHECK( cii == ci, "CHECK biasData size") << "Bias Data ERROR";
+                LOG_CHECK( cii == ci) << "Bias Data ERROR";
                 dstOp->quantized_bias = (int32_t*) biasData.data();
             }
             dstOp->fused_ops      = true;
@@ -497,7 +566,12 @@ namespace BrixLab
             int depthMultiplier                     = tfliteConvOption->depth_multiplier;
             weightSize                              *= depthMultiplier; 
             if(originalWeightPtr){
-                convertDataFormatTflite(originalWeightPtr, dstOp->conv_weights, kh, kw, ci, depthMultiplier);
+                if(dstOp->in_shapes[0].format == TENSOR_FORMATE::NCHW){
+                    LOG_CHECK(convertDataFormatTflite(originalWeightPtr, dstOp->conv_weights, kh, kw, ci, depthMultiplier));
+                }else{
+                    ::memcpy(dstOp->conv_weights, originalWeightPtr, weightSize);
+                }
+                dstOp->hasBias = (inputSize == 3);
                 // bias
                 if (inputSize == 3) {
                     const auto& biasTensor = tfliteTensors[tfliteOp->inputs[2]];
@@ -514,7 +588,7 @@ namespace BrixLab
             } else if (acticationFun == tflite::ActivationFunctionType_RELU6) {
                 dstOp->relu6 = true;
             } else if (acticationFun > tflite::ActivationFunctionType_NONE) {
-                LOG(FATAL_ERROR, "activation error") << "ONEDNN Convolution do not Support fused_activation_function: " << acticationFun;
+                LOG(FATAL_ERROR) << "ONEDNN Convolution do not Support fused_activation_function: " << acticationFun;
             }
 
             // kernel size    
@@ -570,13 +644,34 @@ namespace BrixLab
     }
 
     template<typename DType>
-    void PoolingTflite<DType>::run(layerWeightsParam<DType> *dstOp,
+    void PoolingTflite<DType>::run(strParam<DType> *dstOp,
                         const std::unique_ptr<tflite::OperatorT>& tfliteOp,
                         const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
                         const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                         const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, 
                         bool quantizedModel){
         const auto& tflitePoolOption = tfliteOp->builtin_options.AsPool2DOptions();
+
+        {
+            dstOp->in_shapes.resize(1);
+            dstOp->out_shapes.resize(1);
+            // input shape
+            const int inshapeindex      = tfliteOp->inputs[0];
+            const auto inshape          = tfliteTensors[inshapeindex]->shape;
+            dstOp->in_shapes[0].Batch   = inshape[0];
+            dstOp->in_shapes[0].Height  = inshape[1];
+            dstOp->in_shapes[0].Width   = inshape[2];
+            dstOp->in_shapes[0].Channel = inshape[3];
+            dstOp->in_shapes[0].format  = BrixLab::TENSOR_FORMATE::NHWC;
+            //output shape
+            const int outshapeindex         = tfliteOp->outputs[0];
+            const auto outshape             = tfliteTensors[outshapeindex]->shape;
+            dstOp->out_shapes[0].Batch      = outshape[0];
+            dstOp->out_shapes[0].Height     = outshape[1];
+            dstOp->out_shapes[0].Width      = outshape[2];
+            dstOp->out_shapes[0].Channel    = outshape[3];
+            dstOp->out_shapes[0].format     = BrixLab::TENSOR_FORMATE::NHWC;
+        }
 
         if(quantizedModel) {
             dstOp->quantized_type    = BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED;
@@ -604,7 +699,7 @@ namespace BrixLab
             auto opType        = tfliteOpSet[opIndex]->builtin_code;
             dstOp->pooling_type = get_tflitePooling_Type(opType);
         } else {
-            LOG_CHECK(tflitePoolOption->fused_activation_function == tflite::ActivationFunctionType_NONE, "NO Activation Type");
+            LOG_CHECK(tflitePoolOption->fused_activation_function == tflite::ActivationFunctionType_NONE)<<"NO Activation Type";
             dstOp->quantized_type    = BrixLab::QUANITIZED_TYPE::FLOAT32_REGULAR;
             dstOp->op_type           = BrixLab::OP_type::POOLING;
             
@@ -623,7 +718,7 @@ namespace BrixLab
             //poolParam->isGlobal = false;
         }
 
-        LOG_CHECK(tfliteOp->inputs.size() == 1, "CHECK POOLING INPUTS SIZE") << "Tflite pooling input ERROR";
+        LOG_CHECK(tfliteOp->inputs.size() == 1) << "Tflite pooling input ERROR";
         
         // set input output index
         dstOp->inIndexs.resize(1);
@@ -651,17 +746,38 @@ namespace BrixLab
     }
 
     template<typename DType>
-    void AddTflite<DType>::run(layerWeightsParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
+    void AddTflite<DType>::run(strParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
                         const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
                         const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                         const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, bool quantizedModel){
         const auto& addOption = tfliteOp->builtin_options.AsAddOptions();
         dstOp->fused_ops      = false;
+        {
+            dstOp->in_shapes.resize(2);
+            dstOp->out_shapes.resize(1);
+            // input shape
+            const int inshapeindex      = tfliteOp->inputs[0];
+            const auto inshape          = tfliteTensors[inshapeindex]->shape;
+            dstOp->in_shapes[0].Batch   = inshape[0];
+            dstOp->in_shapes[0].Height  = inshape[1];
+            dstOp->in_shapes[0].Width   = inshape[2];
+            dstOp->in_shapes[0].Channel = inshape[3];
+            dstOp->in_shapes[0].format  = BrixLab::TENSOR_FORMATE::NHWC;
+            dstOp->in_shapes[1]         = dstOp->in_shapes[0];
+            //output shape
+            const int outshapeindex         = tfliteOp->outputs[0];
+            const auto outshape             = tfliteTensors[outshapeindex]->shape;
+            dstOp->out_shapes[0].Batch      = outshape[0];
+            dstOp->out_shapes[0].Height     = outshape[1];
+            dstOp->out_shapes[0].Width      = outshape[2];
+            dstOp->out_shapes[0].Channel    = outshape[3];
+            dstOp->out_shapes[0].format     = BrixLab::TENSOR_FORMATE::NHWC;
+        }
         if (quantizedModel) {
             dstOp->quantized_type    = BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED;
             dstOp->op_type           = BrixLab::OP_type::BINARY_OP;
             
-            LOG_CHECK(tfliteOp->inputs.size() == 2, "OP ADD INPUT SIZE") << "tflite Reshape input ERROR";
+            LOG_CHECK(tfliteOp->inputs.size() == 2) << "tflite ADD input ERROR";
 
             // input0
             const int input1Index                       = tfliteOp->inputs[0];
@@ -685,7 +801,7 @@ namespace BrixLab
             dstOp->fused_act_type                    = static_cast<BrixLab::FusedActivation>(addOption->fused_activation_function);
 
         } else {
-            LOG_CHECK(addOption->fused_activation_function == tflite::ActivationFunctionType_NONE, "CHECK the Fused activation Func")
+            LOG_CHECK(addOption->fused_activation_function == tflite::ActivationFunctionType_NONE)
                                                         << "BinaryOP Should not has fused_activation_function";
             dstOp->quantized_type    = BrixLab::QUANITIZED_TYPE::FLOAT32_REGULAR;
             dstOp->op_type           = BrixLab::OP_type::BINARY_OP;
@@ -706,12 +822,35 @@ namespace BrixLab
     }
 
     template<typename DType>
-    void ConcatTflite<DType>::run(layerWeightsParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
+    void ConcatTflite<DType>::run(strParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
                         const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
                         const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                         const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, bool quantizedModel){
         const auto& tfliteConcatOption = tfliteOp->builtin_options.AsConcatenationOptions();
         dstOp->fused_ops               = false;
+        {
+            const int in_size          = tfliteOp->inputs.size();
+            dstOp->in_shapes.resize(in_size);
+            dstOp->out_shapes.resize(1);
+            // input shape
+            for(int ii = 0; ii < in_size; ii++){
+                const int inshapeindex      = tfliteOp->inputs[ii];
+                const auto inshape          = tfliteTensors[inshapeindex]->shape;
+                dstOp->in_shapes[ii].Batch   = inshape[0];
+                dstOp->in_shapes[ii].Height  = inshape[1];
+                dstOp->in_shapes[ii].Width   = inshape[2];
+                dstOp->in_shapes[ii].Channel = inshape[3];
+                dstOp->in_shapes[ii].format  = BrixLab::TENSOR_FORMATE::NHWC;
+            }
+            //output shape
+            const int outshapeindex         = tfliteOp->outputs[0];
+            const auto outshape             = tfliteTensors[outshapeindex]->shape;
+            dstOp->out_shapes[0].Batch      = outshape[0];
+            dstOp->out_shapes[0].Height     = outshape[1];
+            dstOp->out_shapes[0].Width      = outshape[2];
+            dstOp->out_shapes[0].Channel    = outshape[3];
+            dstOp->out_shapes[0].format     = BrixLab::TENSOR_FORMATE::NHWC;
+        }
         if (quantizedModel) {
             dstOp->quantized_type         = BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED;
             dstOp->op_type                = BrixLab::OP_type::CONCAT;
@@ -731,7 +870,7 @@ namespace BrixLab
             dstOp->fused_ops                  = true;
             dstOp->fused_act_type             = static_cast<BrixLab::FusedActivation>(tfliteConcatOption->fused_activation_function);
         } else {
-            LOG_CHECK(tfliteConcatOption->fused_activation_function == tflite::ActivationFunctionType_NONE, "NO Fused activation Function")
+            LOG_CHECK(tfliteConcatOption->fused_activation_function == tflite::ActivationFunctionType_NONE)
                                                     <<"No FusedActivation Function";
             dstOp->quantized_type         = BrixLab::QUANITIZED_TYPE::FLOAT32_REGULAR;
             dstOp->op_type                = BrixLab::OP_type::CONCAT;
@@ -747,19 +886,39 @@ namespace BrixLab
 
     template<typename DType>
     OP_type ResizeBilinearTflite<DType>::opType(bool quantizedModel){
-        LOG_CHECK(!quantizedModel, "CHECK quantizedmodel");
+        LOG_CHECK(!quantizedModel)<<"no support quantizedmodel";
         return BrixLab::OP_type::RESAMPLING;
     }
 
     template<typename DType>
-    void ResizeBilinearTflite<DType>::run(layerWeightsParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
+    void ResizeBilinearTflite<DType>::run(strParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
                         const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
                         const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                         const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, bool quantizedModel){
-        LOG_CHECK(!quantizedModel, "resizedBiliar must quantized!");
-        dstOp->quantized_type    = BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED;
+        LOG_CHECK(!quantizedModel)<<"resizedBiliar do not support quantized!";
+        dstOp->quantized_type    = BrixLab::QUANITIZED_TYPE::FLOAT32_REGULAR;
         const auto &scaleTensor  = tfliteTensors[tfliteOp->inputs[1]];
         auto code = tfliteOpSet[tfliteOp->opcode_index]->builtin_code;
+        {
+            dstOp->in_shapes.resize(1);
+            dstOp->out_shapes.resize(1);
+            // input shape
+            const int inshapeindex      = tfliteOp->inputs[0];
+            const auto inshape          = tfliteTensors[inshapeindex]->shape;
+            dstOp->in_shapes[0].Batch   = inshape[0];
+            dstOp->in_shapes[0].Height  = inshape[1];
+            dstOp->in_shapes[0].Width   = inshape[2];
+            dstOp->in_shapes[0].Channel = inshape[3];
+            dstOp->in_shapes[0].format  = BrixLab::TENSOR_FORMATE::NHWC;
+            const int outshapeindex         = tfliteOp->outputs[0];
+            const auto outshape             = tfliteTensors[outshapeindex]->shape;
+            dstOp->out_shapes[0].Batch      = outshape[0];
+            dstOp->out_shapes[0].Height     = outshape[1];
+            dstOp->out_shapes[0].Width      = outshape[2];
+            dstOp->out_shapes[0].Channel    = outshape[3];
+            dstOp->out_shapes[0].format     = BrixLab::TENSOR_FORMATE::NHWC;
+        }
+        dstOp->fused_ops = false;
         if (BuiltinOperator_RESIZE_NEAREST_NEIGHBOR == code) {
             const auto& nearest = tfliteOp->builtin_options.AsResizeNearestNeighborOptions();
             dstOp->resized_type          = BrixLab::ResizingType::ResizingNearest;
@@ -769,7 +928,7 @@ namespace BrixLab
             dstOp->resized_type          = BrixLab::ResizingType::ResizingBilinear;
             dstOp->resized_alignCorners  = resizeOption->align_corners;
         } else {
-            LOG(FATAL_ERROR, "no support other ops");
+            LOG(FATAL_ERROR)<< "no support other ops";
         }
         auto scaleDataPtr        = reinterpret_cast<const int *>(tfliteModelBuffer[scaleTensor->buffer]->data.data());
 
@@ -784,9 +943,9 @@ namespace BrixLab
         dstOp->inIndexs[0]  = tfliteOp->inputs[0];
         dstOp->outIndexs[0] = tfliteOp->outputs[0];
     }
-    INSTANEC_UINT8_OP_CONVERTER(ResizeBilinearTflite);
-    REGISTER_CONVERTER(ResizeBilinearTflite<uint8_t>, uint8_t, BuiltinOperator_RESIZE_BILINEAR);
-    REGISTER_CONVERTER(ResizeBilinearTflite<uint8_t>, uint8_t, BuiltinOperator_RESIZE_NEAREST_NEIGHBOR);
+    INSTANEC_FLOAT_OP_CONVERTER(ResizeBilinearTflite);
+    REGISTER_CONVERTER(ResizeBilinearTflite<float>, float, BuiltinOperator_RESIZE_BILINEAR);
+    REGISTER_CONVERTER(ResizeBilinearTflite<float>, float, BuiltinOperator_RESIZE_NEAREST_NEIGHBOR);
     
     DECLARE_OP_COVERTER(ReluTflite);
 
@@ -800,11 +959,32 @@ namespace BrixLab
     }
 
     template<typename DType>
-    void ReluTflite<DType>::run(layerWeightsParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
+    void ReluTflite<DType>::run(strParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
                         const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
                         const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                         const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, bool quantizedModel){
-        auto code = tfliteOpSet[tfliteOp->opcode_index]->builtin_code;
+        auto code           = tfliteOpSet[tfliteOp->opcode_index]->builtin_code;
+        dstOp->fused_ops    = false;
+        {
+            dstOp->in_shapes.resize(1);
+            dstOp->out_shapes.resize(1);
+            // input shape
+            const int inshapeindex      = tfliteOp->inputs[0];
+            const auto inshape          = tfliteTensors[inshapeindex]->shape;
+            dstOp->in_shapes[0].Batch   = inshape[0];
+            dstOp->in_shapes[0].Height  = inshape[1];
+            dstOp->in_shapes[0].Width   = inshape[2];
+            dstOp->in_shapes[0].Channel = inshape[3];
+            dstOp->in_shapes[0].format  = BrixLab::TENSOR_FORMATE::NHWC;
+            //output shape
+            const int outshapeindex         = tfliteOp->outputs[0];
+            const auto outshape             = tfliteTensors[outshapeindex]->shape;
+            dstOp->out_shapes[0].Batch      = outshape[0];
+            dstOp->out_shapes[0].Height     = outshape[1];
+            dstOp->out_shapes[0].Width      = outshape[2];
+            dstOp->out_shapes[0].Channel    = outshape[3];
+            dstOp->out_shapes[0].format     = BrixLab::TENSOR_FORMATE::NHWC;
+        }
         if (BuiltinOperator_RELU == code) {
             dstOp->activate_type        = BrixLab::activitionType::ReLU;
             dstOp->alpha                = 0.f;
@@ -818,7 +998,7 @@ namespace BrixLab
             dstOp->alpha                = 1.f;//待定
             dstOp->beta                 = 0.f;
         } else {
-            LOG(FATAL_ERROR, "no support other Relu ops");
+            LOG(FATAL_ERROR)<<"no support other Relu ops";
         }
     }
     INSTANEC_OP_CONVERTER(ReluTflite);
@@ -841,13 +1021,33 @@ namespace BrixLab
     }
 
     template<typename DType>
-    void SoftmaxTflite<DType>::run(layerWeightsParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
+    void SoftmaxTflite<DType>::run(strParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
                         const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
                         const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                         const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, bool quantizedModel){
-        LOG_CHECK(tfliteOp->inputs.size() == 1, "input size") << "Tflite Softmax input ERROR!";
+        LOG_CHECK(tfliteOp->inputs.size() == 1) << "Tflite Softmax input ERROR!";
         const auto& tfliteSoftmaxOption = tfliteOp->builtin_options.AsSoftmaxOptions();
-
+        dstOp->fused_ops    = false;
+        {
+            dstOp->in_shapes.resize(1);
+            dstOp->out_shapes.resize(1);
+            // input shape
+            const int inshapeindex      = tfliteOp->inputs[0];
+            const auto inshape          = tfliteTensors[inshapeindex]->shape;
+            dstOp->in_shapes[0].Batch   = inshape[0];
+            dstOp->in_shapes[0].Height  = inshape[1];
+            dstOp->in_shapes[0].Width   = inshape[2];
+            dstOp->in_shapes[0].Channel = inshape[3];
+            dstOp->in_shapes[0].format  = BrixLab::TENSOR_FORMATE::NHWC;
+            //output shape
+            const int outshapeindex         = tfliteOp->outputs[0];
+            const auto outshape             = tfliteTensors[outshapeindex]->shape;
+            dstOp->out_shapes[0].Batch      = outshape[0];
+            dstOp->out_shapes[0].Height     = outshape[1];
+            dstOp->out_shapes[0].Width      = outshape[2];
+            dstOp->out_shapes[0].Channel    = outshape[3];
+            dstOp->out_shapes[0].format     = BrixLab::TENSOR_FORMATE::NHWC;
+        }
         if (quantizedModel) {
             dstOp->quantized_type    = BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED;
             dstOp->op_type           = BrixLab::OP_type::SOFTMAX;
@@ -882,12 +1082,35 @@ namespace BrixLab
     }
 
     template<typename DType>
-    void ReductionTflite<DType>::run(layerWeightsParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
+    void ReductionTflite<DType>::run(strParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
                         const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
                         const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                         const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, bool quantizedModel){
         auto opt                        = tfliteOp->builtin_options.AsReducerOptions();
         dstOp->reduce_keep_dims   = opt->keep_dims;
+        {
+            const int in_size          = tfliteOp->inputs.size();
+            dstOp->in_shapes.resize(in_size);
+            dstOp->out_shapes.resize(1);
+            // input shape
+            for(int ii = 0; ii < in_size; ii++){
+                const int inshapeindex      = tfliteOp->inputs[ii];
+                const auto inshape          = tfliteTensors[inshapeindex]->shape;
+                dstOp->in_shapes[ii].Batch   = inshape[0];
+                dstOp->in_shapes[ii].Height  = inshape[1];
+                dstOp->in_shapes[ii].Width   = inshape[2];
+                dstOp->in_shapes[ii].Channel = inshape[3];
+                dstOp->in_shapes[ii].format  = BrixLab::TENSOR_FORMATE::NHWC;
+            }
+            //output shape
+            const int outshapeindex         = tfliteOp->outputs[0];
+            const auto outshape             = tfliteTensors[outshapeindex]->shape;
+            dstOp->out_shapes[0].Batch      = outshape[0];
+            dstOp->out_shapes[0].Height     = outshape[1];
+            dstOp->out_shapes[0].Width      = outshape[2];
+            dstOp->out_shapes[0].Channel    = outshape[3];
+            dstOp->out_shapes[0].format     = BrixLab::TENSOR_FORMATE::NHWC;
+        }
         #ifdef TF_CONVERT_ORIGIN
         const int input1Idx                       = tfliteOp->inputs[1];
         const auto& input1Tensor                  = tfliteTensors[input1Idx];
@@ -924,7 +1147,7 @@ namespace BrixLab
                 break;
             }
             default:{
-                LOG(FATAL_ERROR, "no support reduction type") << "onednn Converter Not Supported!!! Reduction Op: "
+                LOG(FATAL_ERROR) << "onednn Converter Not Supported!!! Reduction Op: "
                         << tfliteOpSet[tfliteOp->opcode_index]->custom_code;
             }
         }
@@ -956,11 +1179,34 @@ namespace BrixLab
     }
 
     template<typename DType>
-    void BinaryTflite<DType>::run(layerWeightsParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
+    void BinaryTflite<DType>::run(strParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
                         const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
                         const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                         const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, bool quantizedModel){
         dstOp->op_type  = BrixLab::OP_type::BINARY_OP;
+        {
+            const int in_size          = tfliteOp->inputs.size();
+            dstOp->in_shapes.resize(in_size);
+            dstOp->out_shapes.resize(1);
+            // input shape
+            for(int ii = 0; ii < in_size; ii++){
+                const int inshapeindex      = tfliteOp->inputs[ii];
+                const auto inshape          = tfliteTensors[inshapeindex]->shape;
+                dstOp->in_shapes[ii].Batch   = inshape[0];
+                dstOp->in_shapes[ii].Height  = inshape[1];
+                dstOp->in_shapes[ii].Width   = inshape[2];
+                dstOp->in_shapes[ii].Channel = inshape[3];
+                dstOp->in_shapes[ii].format  = BrixLab::TENSOR_FORMATE::NHWC;
+            }
+            //output shape
+            const int outshapeindex         = tfliteOp->outputs[0];
+            const auto outshape             = tfliteTensors[outshapeindex]->shape;
+            dstOp->out_shapes[0].Batch      = outshape[0];
+            dstOp->out_shapes[0].Height     = outshape[1];
+            dstOp->out_shapes[0].Width      = outshape[2];
+            dstOp->out_shapes[0].Channel    = outshape[3];
+            dstOp->out_shapes[0].format     = BrixLab::TENSOR_FORMATE::NHWC;
+        }
         switch (tfliteOpSet[tfliteOp->opcode_index]->builtin_code) {
             case tflite::BuiltinOperator_ADD: {
                 dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_ADD;
@@ -988,7 +1234,7 @@ namespace BrixLab
                 break;
             }
             default: {
-                LOG(FATAL_ERROR, "BinaryOp not supported") << "onednn Converter Not Supported!!! BinaryOp:"
+                LOG(FATAL_ERROR) << "onednn Converter Not Supported!!! BinaryOp:"
                                     << tfliteOpSet[tfliteOp->opcode_index]->custom_code;
             }
         }

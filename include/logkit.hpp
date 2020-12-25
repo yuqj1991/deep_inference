@@ -14,6 +14,24 @@ enum LogLevel{
     FATAL_ERROR = 1,
 };
 
+#define RESET   "\033[0m"
+#define BLACK   "\033[30m"      /* Black */
+#define RED     "\033[31m"      /* Red */
+#define GREEN   "\033[32m"      /* Green */
+#define YELLOW  "\033[33m"      /* Yellow */
+#define BLUE    "\033[34m"      /* Blue */
+#define MAGENTA "\033[35m"      /* Magenta */
+#define CYAN    "\033[36m"      /* Cyan */
+#define WHITE   "\033[37m"      /* White */
+#define BOLDBLACK   "\033[1m\033[30m"      /* Bold Black */
+#define BOLDRED     "\033[1m\033[31m"      /* Bold Red */
+#define BOLDGREEN   "\033[1m\033[32m"      /* Bold Green */
+#define BOLDYELLOW  "\033[1m\033[33m"      /* Bold Yellow */
+#define BOLDBLUE    "\033[1m\033[34m"      /* Bold Blue */
+#define BOLDMAGENTA "\033[1m\033[35m"      /* Bold Magenta */
+#define BOLDCYAN    "\033[1m\033[36m"      /* Bold Cyan */
+#define BOLDWHITE   "\033[1m\033[37m"      /* Bold White */
+
 inline std::string get_log_info(LogLevel level){
     std::string result;
     switch (level)
@@ -74,12 +92,12 @@ class LogMessage{
             int ctr_;  // Counter hack (for the LOG_EVERY_X() macro)
             Logstream *self_;  // Consistency check hack
     };
-    LogMessage(std::string file, std::string func, int line_, LogLevel level_, std::string task):
+    LogMessage(std::string file, std::string func, int line_, LogLevel level_):
         filename(file), function(func), line(line_), level(level_){
             data = new (&thread_msg_data) LogMessageData;
             std::string loglevel = get_log_info(level);
             stream().fill('0');
-            stream()<<"["<<loglevel<<"]"<<"["<<task<<"]"<< "["<<filename<<"]["<<function<<"]["<<line<<"]: ";
+            stream()<<"["<<loglevel<<"]"<< "["<<filename<<"]["<<function<<"]["<<line<<"]: ";
             data->num_char_to_log_ = 0;
             data->has_been_flushed_ =false;
 
@@ -110,7 +128,6 @@ class LogMessage{
         if(append_newline){
             data->message_text_[data->num_char_to_log_++] = '\n';
         }
-        //printf("message: %s", data->message_text_);
         send_log();
         if(append_newline){
             data->message_text_[data->num_char_to_log_-1] = '\0';
@@ -124,14 +141,12 @@ class LogMessage{
 
     void send_log(){
         if(level == FATAL_ERROR){
-            fprintf(stderr, "\033[0;3%sm", "");
+            fprintf(stderr, "\033[0;31m");
             fwrite(data->message_text_, data->num_char_to_log_, 1, stderr);
-            fprintf(stderr, "\033[m");
             exit(0);
         }else if(level == DEBUG_INFO){
-            fprintf(stderr, "\033[0;3%sm", "");
+            fprintf(stderr, "\033[0;33m");
             fwrite(data->message_text_, data->num_char_to_log_, 1, stderr);
-            fprintf(stderr, "\033[m");
         }
     }
     private:
@@ -144,12 +159,12 @@ class LogMessage{
     LogLevel level;
 };
 
-#define COMPACT_LOG_DEBUG_INFO(task) LogMessage(__FILE__, __FUNCTION__,__LINE__, DEBUG_INFO, task)
-#define COMPACT_LOG_FATAL_ERROR(task) LogMessage(__FILE__, __FUNCTION__,__LINE__, FATAL_ERROR, task)
-#define LOG(mode, task)  COMPACT_LOG_##mode(task).stream()
+#define COMPACT_LOG_DEBUG_INFO LogMessage(__FILE__, __FUNCTION__,__LINE__, DEBUG_INFO)
+#define COMPACT_LOG_FATAL_ERROR LogMessage(__FILE__, __FUNCTION__,__LINE__, FATAL_ERROR)
+#define LOG(mode)  COMPACT_LOG_##mode.stream()
 
-#define LOG_CHECK(expression, task)\
+#define LOG_CHECK(expression)\
         if(!(expression))\
-            LOG(FATAL_ERROR, task)
+            LOG(FATAL_ERROR)
 //目前只支持LOG(DEBUG_INFO), LOG(FATAL_ERROR), LOG_CHECK(expression)
 #endif

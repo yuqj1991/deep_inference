@@ -12,9 +12,10 @@
 #include <string.h>
 #include "check_error.hpp"
 #include "oneapi/dnnl.hpp"
+#include "logkit.hpp"
 /**
  * 从tflite文件，读取模型结构，还有权重参数， 
- * 重点是对tflite模型，解析获得节点数据，并且转化成以layerNode为节点的graph链表。
+ * 重点是对tflite模型，解析获得节点数据，并且转化成以strLayerNode为节点的graph链表。
  * 然后再推理的时候，根据每一个节点类型依次推断。
  * 主要需要的工作包括：
  * 1）tflite模型解析，生成graph链表，(包括每一个链表节点的数据解析)
@@ -28,7 +29,7 @@ namespace BrixLab
     static dnnl::stream graph_stream(graph_eng);
     enum TENSOR_FORMATE{
         NHWC,
-        NHCW,
+        NCHW,
     };
     typedef struct _TensorShape{
         int Batch;
@@ -47,7 +48,7 @@ namespace BrixLab
         bool operator == (const _TensorShape& right){
             bool euqal = false;
             if(Batch == right.Batch && Channel == right.Channel &&
-                Height == right.Channel && Width == right.Width){
+                Height == right.Height && Width == right.Width){
                 euqal  = true;
             }
             return euqal;
@@ -172,7 +173,7 @@ namespace BrixLab
     };
     
     template<typename DType>
-    struct layerWeightsParam{
+    struct strParam{
         std::string node_name;
         OP_type op_type;
         DataType data_type;
@@ -263,18 +264,19 @@ namespace BrixLab
 
     template<typename DType>
     struct NetT{
-        std::vector<layerWeightsParam<DType> >layer_ops;
+        std::vector<strParam<DType> >layer_ops;
         std::vector<std::string> tensorName;
         std::vector<std::string> output_name;
         int32_t tensorNumber;
     };
 
     template<typename DType>
-    struct graphSet;
+    struct graphSetLink;
 
     template<typename DType>
-    struct layerNode{
+    struct strNodeParam{
         // layer info
+        std::string node_name;
         int fatureSize;
         int weightSize;
         int biasSize;
@@ -375,29 +377,194 @@ namespace BrixLab
 
         // common layer
         std::unordered_map<int, dnnl::memory> op_args;
-        layerNode<DType> *next;
-        layerNode<DType> *front;
-        void (*inference_forward)(layerNode<DType> *, graphSet<DType>&);
-        layerNode<DType>(OP_type type):op_type(type){}
+        void (*inference_forward)(strNodeParam<DType> *, graphSetLink<DType>&);
+        strNodeParam<DType>(OP_type type):op_type(type){}
+        strNodeParam<DType> operator = (strNodeParam<DType> node){
+            this->op_type       = node.op_type;
+            this->node_name     = node.node_name;
+            if(node.in_shapes.size() > 0){
+                this->in_shapes.resize(node.in_shapes.size());
+                for(unsigned int i = 0; i < node.in_shapes.size(); i++){
+                    this->in_shapes[i]  = node.in_shapes[i];
+                }
+            }
+            if(node.out_shapes.size()){
+                this->out_shapes.resize(node.out_shapes.size());
+                for(unsigned int i = 0; i < node.out_shapes.size(); i++){
+                    this->out_shapes[i] = node.out_shapes[i];
+                }
+            }
+            if(node.inputs.size() > 0){
+                this->inputs.resize(node.inputs.size());
+                for(unsigned int i = 0; i < node.inputs.size(); i++){
+                    this->inputs[i]     = node.inputs[i];
+                }
+            }
+            if(node.outputs.size() > 0){
+                this->outputs.resize(node.outputs.size());
+                for(unsigned int i = 0; i < node.outputs.size(); i++){
+                    this->outputs[i]    = node.outputs[i];
+                }
+            }
+            if(node.top_shape.size() > 0){
+                this->top_shape.resize(node.top_shape.size());
+                for(unsigned int i = 0; i < node.top_shape.size(); i++){
+                    this->top_shape[i]  = node.top_shape[i];
+                }
+            }
+            this->layer_top_memory  = node.layer_top_memory;
+            this->layer_top_md      = node.layer_top_md;
+
+            if(node.bottom_shape.size() > 0){
+                this->bottom_shape.resize(node.bottom_shape.size());
+                for(unsigned int i = 0; i < node.bottom_shape.size(); i++){
+                    this->bottom_shape[i]  = node.bottom_shape[i];
+                }
+            }
+            this->src_bottom_md     = node.src_bottom_md;
+            this->src_bottom_memory = node.src_bottom_memory;
+
+            if(node.weights_shape.size() > 0){
+                this->weights_shape.resize(node.weights_shape.size());
+                for(unsigned int i = 0; i < node.weights_shape.size(); i++){
+                    this->weights_shape[i]  = node.weights_shape[i];
+                }
+            }
+            this->src_weights_md     = node.src_weights_md;
+            this->src_weights_memory = node.src_weights_memory;
+
+            if(node.bias_shape.size() > 0){
+                this->bias_shape.resize(node.bias_shape.size());
+                for(unsigned int i = 0; i < node.bias_shape.size(); i++){
+                    this->bias_shape[i]  = node.bias_shape[i];
+                }
+            }
+            
+            this->src_bias_md       = node.src_bias_md;
+            this->src_bias_memory   = node.src_bias_memory;
+            this->groups            = node.groups;
+            this->dilateX           = node.dilateX;
+            this->dilateY           = node.dilateY;
+            this->hasBias           = node.hasBias;
+            this->conv_strides      = node.conv_strides;
+            this->conv_paddingL     = node.conv_paddingL;
+            this->conv_paddingR     = node.conv_paddingR;
+            this->conv_pdesc        = node.conv_pdesc;
+            this->conv_ops          = node.conv_ops;
+            this->conv_post_op      = node.conv_post_op;
+            this->conv_attr         = node.conv_attr;
+
+            this->deconv_strides    = node.deconv_strides;
+            this->deconv_paddingL   = node.deconv_paddingL;
+            this->deconv_paddingR   = node.deconv_paddingR;
+            this->deconv_pdesc      = node.deconv_pdesc;
+            this->deconv_ops        = node.deconv_ops;
+            this->deconv_attr       = node.deconv_attr;
+            this->batchnorm_scale_shift_shape   = node.batchnorm_scale_shift_shape;
+            this->batchnorm_scale_shift_md      = node.batchnorm_scale_shift_md;
+            this->batchnorm_scale_shift_memory  = node.batchnorm_scale_shift_memory;
+            this->batchnorm_pdesc               = node.batchnorm_pdesc;
+            this->batchnorm_mean_memory         = node.batchnorm_mean_memory;
+            this->batchnorm_variance_memory     = node.batchnorm_variance_memory;
+
+            this->pooling_dialiate              = node.pooling_dialiate;
+            this->pooling_kernel                = node.pooling_kernel;
+            this->pooling_strides               = node.pooling_strides;
+            this->pooling_paddingL              = node.pooling_paddingL;
+            this->pooling_paddingR              = node.pooling_paddingR;
+            this->pooling_type                  = node.pooling_type;
+            this->pooling_pdesc                 = node.pooling_pdesc;
+            this->pooling_pdesc_without_d       = node.pooling_pdesc_without_d;
+
+            this->inputset                      = node.inputset;
+            this->concat_num                    = node.concat_num;
+            this->concat_axis                   = node.concat_axis;
+            this->concat_pdesc                  = node.concat_pdesc;
+            if(node.concat_bottom_md.size()>0){
+                this->concat_bottom_md.resize(node.concat_bottom_md.size());
+                for(unsigned int i = 0; i < node.concat_bottom_md.size(); i++){
+                    this->concat_bottom_md[i]   = node.concat_bottom_md[i];
+                }
+            }
+            if(node.concat_bottom_memory.size()>0){
+                this->concat_bottom_memory.resize(node.concat_bottom_memory.size());
+                for(unsigned int i = 0; i < node.concat_bottom_memory.size(); i++){
+                    this->concat_bottom_memory[i]   = node.concat_bottom_memory[i];
+                }
+            }
+            this->sum_num                   = node.sum_num;
+            this->sum_scale                 = node.sum_scale;
+            this->sum_bottom_memory.resize(node.sum_bottom_memory.size());
+            for(unsigned int i = 0; i < node.sum_bottom_memory.size(); i++){
+                this->sum_bottom_memory[i]   = node.sum_bottom_memory[i];
+            }
+            if(node.sum_bottom_md.size()>0){
+                this->sum_bottom_md.resize(node.sum_bottom_md.size());
+                for(unsigned int i = 0; i < node.sum_bottom_md.size(); i++){
+                    this->sum_bottom_md[i]   = node.sum_bottom_md[i];
+                }
+            }
+            this->activate_type         = node.activate_type;
+            this->eltwise_pdesc         = node.eltwise_pdesc;
+        
+            this->alpha                 = node.alpha; 
+            this->beta                  = node.beta;
+            this->binary_type           = node.binary_type;
+            this->binary_pdesc          = node.binary_pdesc;
+
+            if(node.binary_memory.size()>0){
+                this->binary_memory.resize(node.binary_memory.size());
+                for(unsigned int i = 0; i < node.binary_memory.size(); i++){
+                    this->binary_memory[i]   = node.binary_memory[i];
+                }
+            }
+
+            if(node.binary_md.size()>0){
+                this->binary_md.resize(node.binary_md.size());
+                for(unsigned int i = 0; i < node.binary_md.size(); i++){
+                    this->binary_md[i]   = node.binary_md[i];
+                }
+            }
+            this->adjust_scale      = node.adjust_scale;
+            this->resample_pdesc    = node.resample_pdesc;
+
+            this->fc_ops            = node.fc_ops;
+            this->fc_attr           = node.fc_attr;
+            this->fc_post_op        = node.fc_post_op;
+
+            this->inner_pdesc       = node.inner_pdesc;
+            this->op_args           = node.op_args;
+            this->inference_forward = node.inference_forward;
+            return *this;
+        }
     };
 
     template<typename DType>
-    struct graphSet{
+    struct strLayerNode{
+        strNodeParam<DType> node_param;
+        strLayerNode<DType> *next;
+        strLayerNode<DType> *front;
+        strLayerNode<DType>(const strNodeParam<DType>& param): node_param(param), next(nullptr), front(nullptr){
+        }
+    };
+    
+    template<typename DType>
+    struct graphSetLink{
         dnnl::memory input;
-        layerNode<DType> *head;
-        layerNode<DType> *current;
-        layerNode<DType> *tail;
+        strLayerNode<DType> *head;
+        strLayerNode<DType> *current;
+        strLayerNode<DType> *tail;
         int current_index;
-        int graphSize;
-        
-        graphSet(const int &size, const int &index, const dnnl::memory &temp_memory):
-                head(nullptr), current(nullptr),current_index(index), graphSize(size) {
+        int graph_size;
+
+        graphSetLink(const int &size, const int &index, const dnnl::memory &temp_memory):
+                head(nullptr), current(nullptr),current_index(index), graph_size(size) {
             input = temp_memory;
         }
-        layerNode<DType> *operator[](const int &index){
-            layerNode<DType> *temp = nullptr;
-            if(index >= graphSize || index < 0){
-                printf("the index %d is override the graphSize!", index, graphSize);
+        strLayerNode<DType> *operator[](const int &index){
+            strLayerNode<DType> *temp = nullptr;
+            if(index > (graph_size - 1) || index < 0){
+                LOG(FATAL_ERROR)<<"the index: "<<index<<", graph_size: "<<graph_size;
                 return nullptr;
             }else if(index == 0){
                 return head;
@@ -405,18 +572,18 @@ namespace BrixLab
                 return current;
             }else if(index >= 0 && index <= current_index){
                 if((index - 0) <= (current_index - index)){
-                    temp = head;
-                    int count = 0;
+                    temp        = head;
+                    int count   = 0;
                     while(temp != nullptr){
                         if(count == index){
                             break;
                         }
-                        temp = temp->next;
+                        temp    = temp->next;
                         count++;
                     }
                 }else{
-                    int count = current_index;
-                    temp = current;
+                    int count   = current_index;
+                    temp        = current;
                     while(temp != nullptr){
                         if(count == index)
                             break;
@@ -424,84 +591,30 @@ namespace BrixLab
                         count--;
                     }
                 }
-            }else if((index > current_index) && (index < (graphSize - 1))){
-                int count = current_index;
-                temp = current;
+            }else if((index > current_index) && (index <= (graph_size - 1))){
+                int count   = 0;
+                if(current == nullptr && current_index == 0){
+                    count       = 0;
+                    temp        = head;
+                }else{
+                    count       = current_index;
+                    temp        = current;
+                }
                 while(temp != nullptr){
-                        if(count == index)
-                            break;
-                        temp = temp->next;
-                        count++;
+                    if(count == index)
+                        break;
+                    temp = temp->next;
+                    count++;
                 }
             }
+            current_index   = index;
+            current         = temp;
             return temp;
         }
     };
 
-    inline std::string get_mapped_op_string(OP_type type){
-        std::string op_name;
-        switch(type){
-            case OP_type::CONVOLUTION:{
-                op_name = std::string("OP_convolution");
-                break;
-            }
-            case OP_type::DECONVOLUTION:{
-                op_name = std::string("OP_deconvolution");
-                break;
-            }
-            case OP_type::BATCHNORM:{
-                op_name = std::string("OP_batchnorm");
-                break;
-            }
-            case OP_type::ELTWISE:{
-                op_name = std::string("OP_eltwise");
-                break;
-            }
-            case OP_type::POOLING:{
-                op_name = std::string("OP_pooling");
-                break;
-            }
-            case OP_type::DATA_INPUTS:{
-                op_name = std::string("OP_inputs");
-                break;
-            }
-            case OP_type::DETECTION:{
-                op_name = std::string("OP_detection");
-                break;
-            }
-            case OP_type::CONCAT:{
-                op_name = std::string("OP_concat");
-                break;
-            }
-            case OP_type::RESAMPLING:{
-                op_name = std::string("OP_resample");
-                break;
-            }
-            case OP_type::ACTIVITION:{
-                op_name = std::string("OP_activition");
-                break;
-            }
-            case OP_type::INNERPRODUCT:{
-                op_name = std::string("OP_innerproduct");
-                break;
-            }
-            case OP_type::SOFTMAX:{
-                op_name = std::string("OP_softmax");
-                break;
-            }
-            case OP_type::REDUCTION:{
-                op_name = std::string("OP_reduction");
-                break;
-            }
-            case OP_type::BINARY_OP:{
-                op_name = std::string("OP_binary");
-                break;
-            }
-        }
-        return op_name;
-    }
     inline void *xmalloc(size_t size) {
-        void *ptr=malloc(size);
+        void *ptr = malloc(size);
         if(!ptr) {
             malloc_error();
         }
@@ -509,7 +622,7 @@ namespace BrixLab
     }
 
     inline void *xcalloc(size_t nmemb, size_t size) {
-        void *ptr=calloc(nmemb,size);
+        void *ptr = calloc(nmemb,size);
         if(!ptr) {
             calloc_error();
         }
@@ -518,123 +631,20 @@ namespace BrixLab
     }
 
     // Read from memory, write to handle
-    inline void read_from_dnnl_memory(void *handle, dnnl::memory &mem) {
-        dnnl::engine eng = mem.get_engine();
-        size_t size = mem.get_desc().get_size();
-
-    #if DNNL_WITH_SYCL
-        bool is_cpu_sycl = (DNNL_CPU_RUNTIME == DNNL_RUNTIME_SYCL
-                && eng.get_kind() == dnnl::engine::kind::cpu);
-        bool is_gpu_sycl = (DNNL_GPU_RUNTIME == DNNL_RUNTIME_SYCL
-                && eng.get_kind() == dnnl::engine::kind::gpu);
-        if (is_cpu_sycl || is_gpu_sycl) {
-            auto mkind = dnnl::sycl_interop::get_memory_kind(mem);
-            if (mkind == dnnl::sycl_interop::memory_kind::buffer) {
-                auto buffer = dnnl::sycl_interop::get_buffer<uint8_t>(mem);
-                auto src = buffer.get_access<cl::sycl::access::mode::read>();
-                uint8_t *src_ptr = src.get_pointer();
-                for (size_t i = 0; i < size; ++i)
-                    ((uint8_t *)handle)[i] = src_ptr[i];
-            } else {
-                assert(mkind == dnnl::sycl_interop::memory_kind::usm);
-                uint8_t *src_ptr = (uint8_t *)mem.get_data_handle();
-                if (is_cpu_sycl) {
-                    for (size_t i = 0; i < size; ++i)
-                        ((uint8_t *)handle)[i] = src_ptr[i];
-                } else {
-                    auto sycl_queue
-                            = dnnl::sycl_interop::get_queue(dnnl::stream(eng));
-                    sycl_queue.memcpy(src_ptr, handle, size).wait();
-                }
-            }
-            return;
-        }
-    #endif
-    #if DNNL_GPU_RUNTIME == DNNL_RUNTIME_OCL
-        if (eng.get_kind() == dnnl::engine::kind::gpu) {
-            dnnl::stream s(eng);
-            cl_command_queue q = dnnl::ocl_interop::get_command_queue(s);
-            cl_mem m = dnnl::ocl_interop::get_mem_object(mem);
-
-            cl_int ret = clEnqueueReadBuffer(
-                    q, m, CL_TRUE, 0, size, handle, 0, NULL, NULL);
-            if (ret != CL_SUCCESS)
-                throw std::runtime_error("clEnqueueReadBuffer failed.");
-            return;
-        }
-    #endif
-
-        if (eng.get_kind() == dnnl::engine::kind::cpu) {
-            uint8_t *src = static_cast<uint8_t *>(mem.get_data_handle());
-            for (size_t i = 0; i < size; ++i)
-                ((uint8_t *)handle)[i] = src[i];
-            return;
-        }
-
-        assert(!"not expected");
-    }
-
-    // Read from handle, write to memory
-    inline void write_to_dnnl_memory(void *handle, dnnl::memory &mem) {
-        dnnl::engine eng = mem.get_engine();
-        size_t size = mem.get_desc().get_size();
-    #if DNNL_WITH_SYCL
-        bool is_cpu_sycl = (DNNL_CPU_RUNTIME == DNNL_RUNTIME_SYCL
-                && eng.get_kind() == dnnl::engine::kind::cpu);
-        bool is_gpu_sycl = (DNNL_GPU_RUNTIME == DNNL_RUNTIME_SYCL
-                && eng.get_kind() == dnnl::engine::kind::gpu);
-        if (is_cpu_sycl || is_gpu_sycl) {
-            auto mkind = dnnl::sycl_interop::get_memory_kind(mem);
-            if (mkind == dnnl::sycl_interop::memory_kind::buffer) {
-                auto buffer = dnnl::sycl_interop::get_buffer<uint8_t>(mem);
-                auto dst = buffer.get_access<cl::sycl::access::mode::write>();
-                uint8_t *dst_ptr = dst.get_pointer();
-                for (size_t i = 0; i < size; ++i)
-                    dst_ptr[i] = ((uint8_t *)handle)[i];
-            } else {
-                assert(mkind == dnnl::sycl_interop::memory_kind::usm);
-                uint8_t *dst_ptr = (uint8_t *)mem.get_data_handle();
-                if (is_cpu_sycl) {
-                    for (size_t i = 0; i < size; ++i)
-                        dst_ptr[i] = ((uint8_t *)handle)[i];
-                } else {
-                    auto sycl_queue
-                            = dnnl::sycl_interop::get_queue(dnnl::stream(eng));
-                    sycl_queue.memcpy(dst_ptr, handle, size).wait();
-                }
-            }
-            return;
-        }
-    #endif
-    #if DNNL_GPU_RUNTIME == DNNL_RUNTIME_OCL
-        if (eng.get_kind() == dnnl::engine::kind::gpu) {
-            dnnl::stream s(eng);
-            cl_command_queue q = dnnl::ocl_interop::get_command_queue(s);
-            cl_mem m = dnnl::ocl_interop::get_mem_object(mem);
-
-            cl_int ret = clEnqueueWriteBuffer(
-                    q, m, CL_TRUE, 0, size, handle, 0, NULL, NULL);
-            if (ret != CL_SUCCESS)
-                throw std::runtime_error("clEnqueueWriteBuffer failed.");
-            return;
-        }
-    #endif
-
-        if (eng.get_kind() == dnnl::engine::kind::cpu) {
-            uint8_t *dst = static_cast<uint8_t *>(mem.get_data_handle());
-            for (size_t i = 0; i < size; ++i)
-                dst[i] = ((uint8_t *)handle)[i];
-            return;
-        }
-
-        assert(!"not expected");
-    }
+    void read_from_dnnl_memory(void *handle, dnnl::memory &mem);
+    void write_to_dnnl_memory(void *handle, dnnl::memory &mem);
     dnnl::algorithm get_op_mapped_pooling_type(PoolingType type);
     dnnl::algorithm get_op_mapped_activition_type(activitionType type);
     dnnl::algorithm get_op_mapped_binary_type(BinaryOpOperationType type);
     void checK_equal_dims(const dnnl::memory::dims &A_Shape, const dnnl::memory::dims &B_Shape);
     void check_inputs_shape(const std::vector<TensorShape> &inputs);
-    template<typename DType> void graph_insert(graphSet<DType> &g_state, layerNode<DType> *node);
+    template<typename DType> void graph_insert(graphSetLink<DType> &g_state, strLayerNode<DType> *node);
+    std::string get_quantized_type(QUANITIZED_TYPE type);
+    std::string get_binary_type(BinaryOpOperationType type);
+    std::string get_mapped_op_string(OP_type type);
+    template<typename DType> int get_net_index_by_name(const std::vector<strParam<DType> > &layer_ops, const std::string &node_name);
+    void print_dnnl_memory_shape(const dnnl::memory::dims &shape, const string &shape_name);
+    int product_dnnl_memory_shape(const dnnl::memory::dims &shape);
 } // namespace BrixLab
 
 #endif // #ifndef

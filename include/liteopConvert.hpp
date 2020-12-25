@@ -13,7 +13,7 @@ namespace BrixLab{
     template<typename DType>
     class liteOpConverter {
     public:
-        virtual void run(layerWeightsParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
+        virtual void run(strParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
                         const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
                         const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                         const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, bool quantizedModel) = 0;
@@ -60,7 +60,7 @@ namespace BrixLab{
         template<typename DType>                                                                                            \
         class name : public liteOpConverter<DType> {                                                                        \
         public:                                                                                                             \
-            virtual void run(layerWeightsParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,           \
+            virtual void run(strParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,           \
                             const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,                             \
                             const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,                         \
                             const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, bool quantizedModel);   \

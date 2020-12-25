@@ -43,11 +43,11 @@ namespace BrixLab
 
     template<typename DType>
     bool convertDataFormatTflite(const DType* src, DType* dst, int KH, int KW, int CI, int CO) {
-        LOG_CHECK(KH > 0, "KH>0")/* constant-expression */<<"KH <= 0";
-        LOG_CHECK(KW > 0, "KW>0")<<"KW <= 0";
-        LOG_CHECK(CI > 0, "KI>0")<<"CI <= 0";
-        LOG_CHECK(CO > 0, "KO>0")<<"KO <= 0";
-        LOG_CHECK(src != nullptr, "src != nullptr");
+        LOG_CHECK(KH > 0)/* constant-expression */<<"KH <= 0";
+        LOG_CHECK(KW > 0)<<"KW <= 0";
+        LOG_CHECK(CI > 0)<<"CI <= 0";
+        LOG_CHECK(CO > 0)<<"KO <= 0";
+        LOG_CHECK(src != nullptr)<< "src != nullptr";
         // CO KH KW CI --> CO CI KH KW
         for (int oc = 0; oc < CO; ++oc) {
             for (int ic = 0; ic < CI; ++ic) {
@@ -141,7 +141,6 @@ namespace BrixLab
 
         return fused_op;
     }
-
 } // namespace BrixLab
 
 #endif
