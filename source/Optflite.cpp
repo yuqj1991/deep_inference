@@ -125,10 +125,9 @@ namespace BrixLab
             int in_size  = co;
             auto originalWeightPtr = reinterpret_cast<const DType*>(tfliteModelBuffer[weightTensor->buffer]->data.data());
             dstOp->conv_weights = (DType*)xcalloc(in_size * out_size, sizeof(DType));
-            if(dstOp->in_shapes[0].format == TENSOR_FORMATE::NCHW){
+            if(dstOp->in_shapes[0].format == TENSOR_FORMATE::NHWC){
+                //weights convert ohwi ->oihw
                 LOG_CHECK(convertDataFormatTflite(originalWeightPtr, dstOp->conv_weights, kh, kw, ci, co));
-            }else{
-                ::memcpy(dstOp->conv_weights, originalWeightPtr, weightSize);
             }
             
             dstOp->hasBias = (inputSize == 3);
@@ -151,10 +150,9 @@ namespace BrixLab
             dstOp->conv_weights = (DType*)xcalloc(weightSize, sizeof(DType));
             // weight
             auto originalWeightPtr = reinterpret_cast<const DType*>(tfliteModelBuffer[weightTensor->buffer]->data.data());
-            if(dstOp->in_shapes[0].format == TENSOR_FORMATE::NCHW){
+            if(dstOp->in_shapes[0].format == TENSOR_FORMATE::NHWC){
+                //weights convert ohwi ->oihw
                 LOG_CHECK(convertDataFormatTflite(originalWeightPtr, dstOp->conv_weights, kh, kw, ci, co));
-            }else{
-                ::memcpy(dstOp->conv_weights, originalWeightPtr, weightSize);
             }
             // bias
             dstOp->conv_bias = (DType*)xcalloc(co, sizeof(DType));
@@ -165,18 +163,14 @@ namespace BrixLab
                 ::memcpy(dstOp->conv_bias, biasDataPtr, sizeof(DType) * co);
             }
 
-            dstOp->relu             = false;
-            dstOp->relu6            = false;
             const auto acticationFun = tfliteConvOption->fused_activation_function;
             if (acticationFun == tflite::ActivationFunctionType_RELU) {
-                dstOp->relu = true;
+                dstOp->fused_ops        = true;
+                dstOp->fused_act_type   = BrixLab::FusedActivation::Fused_kTfLiteActRelu;
             } else if (acticationFun == tflite::ActivationFunctionType_RELU6) {
-                dstOp->relu6 = true;
-            } else if (acticationFun > tflite::ActivationFunctionType_NONE) {
-                LOG(FATAL_ERROR) << 
-                            "ONEDNN Convolution do not Support fused_activation_function: " << acticationFun;
+                dstOp->fused_ops        = true;
+                dstOp->fused_act_type   = BrixLab::FusedActivation::Fused_kTfLiteActRelu6;
             }
-
             dstOp->groups       = 1;
             dstOp->k_c          = co;
             dstOp->k_in         = ci;
@@ -270,10 +264,9 @@ namespace BrixLab
         // weight
         auto originalWeightPtr = reinterpret_cast<const DType*>(tfliteModelBuffer[weightTensor->buffer]->data.data());
         dstOp->transposed_weights = (DType*)xcalloc(weightSize, sizeof(DType));
-        if(dstOp->in_shapes[0].format == TENSOR_FORMATE::NCHW){
+        if(dstOp->in_shapes[0].format == TENSOR_FORMATE::NHWC){
+            //weights convert ohwi ->oihw
             LOG_CHECK(convertDataFormatTflite(originalWeightPtr, dstOp->transposed_weights, kh, kw, ci, co));
-        }else{
-            ::memcpy(dstOp->transposed_weights, originalWeightPtr, weightSize);
         }
         // bias
         if (inputSize == 3) {
@@ -285,9 +278,6 @@ namespace BrixLab
                 ::memcpy(dstOp->transposed_bias, biasDataPtr, sizeof(DType) * co);
             }
         }
-        
-        dstOp->relu6     = false;
-        dstOp->relu      = false;
         dstOp->groups    = 1;
         dstOp->k_c       = co;
         dstOp->k_in      = ci;
@@ -430,6 +420,16 @@ namespace BrixLab
                 }
             }
         }
+
+        const auto &options = tfliteOp->builtin_options.AsFullyConnectedOptions();
+        auto act_type       = options->fused_activation_function;
+        if(act_type == tflite::ActivationFunctionType_RELU){
+            dstOp->fused_ops        = true;
+            dstOp->fused_act_type   = BrixLab::FusedActivation::Fused_kTfLiteActRelu;
+        }else if(act_type == tflite::ActivationFunctionType_RELU6){
+            dstOp->fused_ops        = true;
+            dstOp->fused_act_type   = BrixLab::FusedActivation::Fused_kTfLiteActRelu6;
+        }
     }
 
     INSTANEC_OP_CONVERTER(FullConnectedTflite);
@@ -538,10 +538,9 @@ namespace BrixLab
             LOG_CHECK(weightTensor->type == tflite::TensorType_UINT8) << "weights Data type ERROR";
             dstOp->conv_weights = (DType *)xcalloc(weightSize, sizeof(DType));
             auto originalWeightPtr = reinterpret_cast<const DType*>(tfliteModelBuffer[weightTensor->buffer]->data.data());
-            if(dstOp->in_shapes[0].format == TENSOR_FORMATE::NCHW){
+            if(dstOp->in_shapes[0].format == TENSOR_FORMATE::NHWC){
+                //weights convert ohwi ->goihw
                 LOG_CHECK(convertDataFormatTflite(originalWeightPtr, dstOp->conv_weights, kh, kw, ci, depthMultiplier));
-            }else{
-                ::memcpy(dstOp->conv_weights, originalWeightPtr, weightSize);
             }
             dstOp->hasBias = (inputSize == 3);
             // have bias
@@ -566,10 +565,8 @@ namespace BrixLab
             int depthMultiplier                     = tfliteConvOption->depth_multiplier;
             weightSize                              *= depthMultiplier; 
             if(originalWeightPtr){
-                if(dstOp->in_shapes[0].format == TENSOR_FORMATE::NCHW){
+                if(dstOp->in_shapes[0].format == TENSOR_FORMATE::NHWC){
                     LOG_CHECK(convertDataFormatTflite(originalWeightPtr, dstOp->conv_weights, kh, kw, ci, depthMultiplier));
-                }else{
-                    ::memcpy(dstOp->conv_weights, originalWeightPtr, weightSize);
                 }
                 dstOp->hasBias = (inputSize == 3);
                 // bias
@@ -580,13 +577,13 @@ namespace BrixLab
                     ::memcpy(dstOp->conv_bias, originalBiasPtr, sizeof(DType) * ci * depthMultiplier);
                 }
             }
-            dstOp->relu6 = false;
-            dstOp->relu  = false;
             auto acticationFun = tfliteConvOption->fused_activation_function;
             if (acticationFun == tflite::ActivationFunctionType_RELU) {
-                dstOp->relu = true;
+                dstOp->fused_ops        = true;
+                dstOp->fused_act_type   = BrixLab::FusedActivation::Fused_kTfLiteActRelu;
             } else if (acticationFun == tflite::ActivationFunctionType_RELU6) {
-                dstOp->relu6 = true;
+                dstOp->fused_ops        = true;
+                dstOp->fused_act_type   = BrixLab::FusedActivation::Fused_kTfLiteActRelu6;
             } else if (acticationFun > tflite::ActivationFunctionType_NONE) {
                 LOG(FATAL_ERROR) << "ONEDNN Convolution do not Support fused_activation_function: " << acticationFun;
             }
@@ -715,10 +712,11 @@ namespace BrixLab
             const auto opIndex          = tfliteOp->opcode_index;
             auto opType                 = tfliteOpSet[opIndex]->builtin_code;
             dstOp->pooling_type  = get_tflitePooling_Type(opType);
-            //poolParam->isGlobal = false;
         }
 
         LOG_CHECK(tfliteOp->inputs.size() == 1) << "Tflite pooling input ERROR";
+        dstOp->p_dilatedX       = 0;
+        dstOp->p_dilatedY       = 0;
         
         // set input output index
         dstOp->inIndexs.resize(1);
@@ -733,83 +731,6 @@ namespace BrixLab
 
     REGISTER_CONVERTER(PoolingTflite<float>, float, BuiltinOperator_AVERAGE_POOL_2D);
     REGISTER_CONVERTER(PoolingTflite<uint8_t>, uint8_t, BuiltinOperator_AVERAGE_POOL_2D);
-
-    DECLARE_OP_COVERTER(AddTflite);
-
-    template<typename DType>
-    OP_type AddTflite<DType>::opType(bool quantizedModel){
-        if(quantizedModel){
-            return BrixLab::OP_type::BINARY_OP;
-        }else{
-            return BrixLab::OP_type::BINARY_OP;
-        }
-    }
-
-    template<typename DType>
-    void AddTflite<DType>::run(strParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
-                        const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
-                        const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
-                        const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, bool quantizedModel){
-        const auto& addOption = tfliteOp->builtin_options.AsAddOptions();
-        dstOp->fused_ops      = false;
-        {
-            dstOp->in_shapes.resize(2);
-            dstOp->out_shapes.resize(1);
-            // input shape
-            const int inshapeindex      = tfliteOp->inputs[0];
-            const auto inshape          = tfliteTensors[inshapeindex]->shape;
-            dstOp->in_shapes[0].Batch   = inshape[0];
-            dstOp->in_shapes[0].Height  = inshape[1];
-            dstOp->in_shapes[0].Width   = inshape[2];
-            dstOp->in_shapes[0].Channel = inshape[3];
-            dstOp->in_shapes[0].format  = BrixLab::TENSOR_FORMATE::NHWC;
-            dstOp->in_shapes[1]         = dstOp->in_shapes[0];
-            //output shape
-            const int outshapeindex         = tfliteOp->outputs[0];
-            const auto outshape             = tfliteTensors[outshapeindex]->shape;
-            dstOp->out_shapes[0].Batch      = outshape[0];
-            dstOp->out_shapes[0].Height     = outshape[1];
-            dstOp->out_shapes[0].Width      = outshape[2];
-            dstOp->out_shapes[0].Channel    = outshape[3];
-            dstOp->out_shapes[0].format     = BrixLab::TENSOR_FORMATE::NHWC;
-        }
-        if (quantizedModel) {
-            dstOp->quantized_type    = BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED;
-            dstOp->op_type           = BrixLab::OP_type::BINARY_OP;
-            
-            LOG_CHECK(tfliteOp->inputs.size() == 2) << "tflite ADD input ERROR";
-
-            // input0
-            const int input1Index                       = tfliteOp->inputs[0];
-            const auto& input1Tensor                    = tfliteTensors[input1Index];
-            dstOp->inputs_zeropoint.push_back(input1Tensor->quantization->zero_point[0]);
-            dstOp->inputs_scale.push_back(input1Tensor->quantization->scale[0]);
-
-            // input1
-            const int input2Index                       = tfliteOp->inputs[1];
-            const auto& input2Tensor                    = tfliteTensors[input2Index];
-            dstOp->inputs_zeropoint.push_back(input2Tensor->quantization->zero_point[0]);
-            dstOp->inputs_scale.push_back(input2Tensor->quantization->scale[0]);
-
-            // output
-            const int outputIndex                       = tfliteOp->outputs[0];
-            const auto& outputTensor                    = tfliteTensors[outputIndex];
-            dstOp->outputs_zero_point                = outputTensor->quantization->zero_point[0];
-            dstOp->outputs_zero_point                = outputTensor->quantization->scale[0];
-
-            dstOp->fused_ops                         = true;
-            dstOp->fused_act_type                    = static_cast<BrixLab::FusedActivation>(addOption->fused_activation_function);
-
-        } else {
-            LOG_CHECK(addOption->fused_activation_function == tflite::ActivationFunctionType_NONE)
-                                                        << "BinaryOP Should not has fused_activation_function";
-            dstOp->quantized_type    = BrixLab::QUANITIZED_TYPE::FLOAT32_REGULAR;
-            dstOp->op_type           = BrixLab::OP_type::BINARY_OP;
-        }
-    }
-    INSTANEC_OP_CONVERTER(AddTflite);
-    REGISTER_CONVERTER(AddTflite<float>, float, BuiltinOperator_ADD);
-    REGISTER_CONVERTER(AddTflite<uint8_t>, uint8_t, BuiltinOperator_ADD);
 
     DECLARE_OP_COVERTER(ConcatTflite);
     template<typename DType>
@@ -1183,20 +1104,38 @@ namespace BrixLab
                         const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
                         const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
                         const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, bool quantizedModel){
-        dstOp->op_type  = BrixLab::OP_type::BINARY_OP;
+        dstOp->op_type          = BrixLab::OP_type::BINARY_OP;
+        dstOp->custumter_data_  = false;
         {
             const int in_size          = tfliteOp->inputs.size();
+            LOG_CHECK(in_size == 2)<<"BINARY INPUT SIZE ERROR";
             dstOp->in_shapes.resize(in_size);
             dstOp->out_shapes.resize(1);
             // input shape
             for(int ii = 0; ii < in_size; ii++){
                 const int inshapeindex      = tfliteOp->inputs[ii];
                 const auto inshape          = tfliteTensors[inshapeindex]->shape;
-                dstOp->in_shapes[ii].Batch   = inshape[0];
-                dstOp->in_shapes[ii].Height  = inshape[1];
-                dstOp->in_shapes[ii].Width   = inshape[2];
-                dstOp->in_shapes[ii].Channel = inshape[3];
+                if(inshape.size() == 4){
+                    dstOp->in_shapes[ii].Batch   = inshape[0];
+                    dstOp->in_shapes[ii].Height  = inshape[1];
+                    dstOp->in_shapes[ii].Width   = inshape[2];
+                    dstOp->in_shapes[ii].Channel = inshape[3];
+                }else if(inshape.size() == 1){
+                    dstOp->in_shapes[ii].Channel = inshape[0];
+                    dstOp->in_shapes[ii].Batch   = 1;
+                    dstOp->in_shapes[ii].Height  = 1;
+                    dstOp->in_shapes[ii].Width   = 1;
+                }
                 dstOp->in_shapes[ii].format  = BrixLab::TENSOR_FORMATE::NHWC;
+            }
+            if(!(dstOp->in_shapes[1] == dstOp->in_shapes[0])){
+                LOG(DEBUG_INFO)<<dstOp->in_shapes[1].Channel;
+                dstOp->custumter_data_      = true;
+                dstOp->binary_custum_data_  = (DType *)xcalloc(dstOp->in_shapes[1].Channel, sizeof(DType));
+                const int in_id             = tfliteOp->inputs[1];
+                const auto& in_tensor       = tfliteTensors[in_id];
+                auto biasDataPtr            = reinterpret_cast<const DType*>(tfliteModelBuffer[in_tensor->buffer]->data.data());
+                memcpy(dstOp->binary_custum_data_, biasDataPtr, sizeof(DType) * dstOp->in_shapes[1].Channel);
             }
             //output shape
             const int outshapeindex         = tfliteOp->outputs[0];
@@ -1207,13 +1146,47 @@ namespace BrixLab
             dstOp->out_shapes[0].Channel    = outshape[3];
             dstOp->out_shapes[0].format     = BrixLab::TENSOR_FORMATE::NHWC;
         }
+        dstOp->fused_ops                    = false;
         switch (tfliteOpSet[tfliteOp->opcode_index]->builtin_code) {
             case tflite::BuiltinOperator_ADD: {
                 dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_ADD;
+                const auto& addOption = tfliteOp->builtin_options.AsAddOptions();
+                if (quantizedModel) {
+                    dstOp->quantized_type    = BrixLab::QUANITIZED_TYPE::UINT8_QUANTIZED;
+                    // input0
+                    const int input1Index                       = tfliteOp->inputs[0];
+                    const auto& input1Tensor                    = tfliteTensors[input1Index];
+                    dstOp->inputs_zeropoint.push_back(input1Tensor->quantization->zero_point[0]);
+                    dstOp->inputs_scale.push_back(input1Tensor->quantization->scale[0]);
+
+                    // input1
+                    const int input2Index                       = tfliteOp->inputs[1];
+                    const auto& input2Tensor                    = tfliteTensors[input2Index];
+                    dstOp->inputs_zeropoint.push_back(input2Tensor->quantization->zero_point[0]);
+                    dstOp->inputs_scale.push_back(input2Tensor->quantization->scale[0]);
+
+                    // output
+                    const int outputIndex                       = tfliteOp->outputs[0];
+                    const auto& outputTensor                    = tfliteTensors[outputIndex];
+                    dstOp->outputs_zero_point                   = outputTensor->quantization->zero_point[0];
+                    dstOp->outputs_zero_point                   = outputTensor->quantization->scale[0];
+
+                } else {
+                    dstOp->quantized_type                   = BrixLab::QUANITIZED_TYPE::FLOAT32_REGULAR;
+                }
+                dstOp->fused_act_type                       = static_cast<BrixLab::FusedActivation>(addOption->fused_activation_function);
+                if(dstOp->fused_act_type != BrixLab::FusedActivation::Fused_kTfLiteActNone){
+                    dstOp->fused_ops                        = true;
+                }
                 break;
             }
             case tflite::BuiltinOperator_SUB: {
-                dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_SUB;
+                dstOp->binary_type      = BrixLab::BinaryOpOperationType::BinaryOpOperation_SUB;
+                const auto& subOption   = tfliteOp->builtin_options.AsSubOptions();
+                dstOp->fused_act_type   = static_cast<BrixLab::FusedActivation>(subOption->fused_activation_function);
+                if(dstOp->fused_act_type != BrixLab::FusedActivation::Fused_kTfLiteActNone){
+                    dstOp->fused_ops    = true;
+                }
                 break;
             }
             case BuiltinOperator_MUL:
@@ -1223,6 +1196,11 @@ namespace BrixLab
             }
             case tflite::BuiltinOperator_DIV: {
                 dstOp->binary_type = BrixLab::BinaryOpOperationType::BinaryOpOperation_DIV;
+                const auto& Option   = tfliteOp->builtin_options.AsDivOptions();
+                dstOp->fused_act_type   = static_cast<BrixLab::FusedActivation>(Option->fused_activation_function);
+                if(dstOp->fused_act_type != BrixLab::FusedActivation::Fused_kTfLiteActNone){
+                    dstOp->fused_ops    = true;
+                }
                 break;
             }
             case tflite::BuiltinOperator_MAXIMUM: {
@@ -1236,13 +1214,14 @@ namespace BrixLab
             default: {
                 LOG(FATAL_ERROR) << "onednn Converter Not Supported!!! BinaryOp:"
                                     << tfliteOpSet[tfliteOp->opcode_index]->custom_code;
+                break;
             }
         }
     }
     INSTANEC_OP_CONVERTER(BinaryTflite);
 
-    //REGISTER_CONVERTER(BinaryTflite<float>, float, BuiltinOperator_ADD);
-    //REGISTER_CONVERTER(BinaryTflite<uint8_t>, uint8_t, BuiltinOperator_ADD);
+    REGISTER_CONVERTER(BinaryTflite<float>, float, BuiltinOperator_ADD);
+    REGISTER_CONVERTER(BinaryTflite<uint8_t>, uint8_t, BuiltinOperator_ADD);
 
     REGISTER_CONVERTER(BinaryTflite<float>, float, BuiltinOperator_SUB);
     REGISTER_CONVERTER(BinaryTflite<uint8_t>, uint8_t, BuiltinOperator_SUB);
@@ -1262,5 +1241,79 @@ namespace BrixLab
     REGISTER_CONVERTER(BinaryTflite<float>, float, BuiltinOperator_LOGICAL_AND);
     REGISTER_CONVERTER(BinaryTflite<uint8_t>, uint8_t, BuiltinOperator_LOGICAL_AND);
 
+
+    DECLARE_OP_COVERTER(SPaceToBatchND);
+    template<typename DType>
+    OP_type SPaceToBatchND<DType>::opType(bool quantizedModel){
+        if(quantizedModel){
+            return BrixLab::OP_type::SPACE_PERMUTES;
+        }else{
+            return BrixLab::OP_type::SPACE_PERMUTES;
+        }
+    }
+
+    template<typename DType>
+    void SPaceToBatchND<DType>::run(strParam<DType> *dstOp, const std::unique_ptr<tflite::OperatorT>& tfliteOp,
+                        const std::vector<std::unique_ptr<tflite::TensorT>>& tfliteTensors,
+                        const std::vector<std::unique_ptr<tflite::BufferT>>& tfliteModelBuffer,
+                        const std::vector<std::unique_ptr<tflite::OperatorCodeT>>& tfliteOpSet, bool quantizedModel){
+        dstOp->op_type                      = BrixLab::OP_type::SPACE_PERMUTES;
+        {
+            dstOp->in_shapes.resize(1);
+            dstOp->out_shapes.resize(1);
+            // input shape
+            for(int ii = 0; ii < 1; ii++){
+                const int inshapeindex      = tfliteOp->inputs[ii];
+                const auto inshape          = tfliteTensors[inshapeindex]->shape;
+                dstOp->in_shapes[ii].Batch  = inshape[0];
+                dstOp->in_shapes[ii].Height = inshape[1];
+                dstOp->in_shapes[ii].Width  = inshape[2];
+                dstOp->in_shapes[ii].Channel= inshape[3];
+                dstOp->in_shapes[ii].format = BrixLab::TENSOR_FORMATE::NHWC;
+            }
+            //output shape
+            const int outshapeindex         = tfliteOp->outputs[0];
+            const auto outshape             = tfliteTensors[outshapeindex]->shape;
+            dstOp->out_shapes[0].Batch      = outshape[0];
+            dstOp->out_shapes[0].Height     = outshape[1];
+            dstOp->out_shapes[0].Width      = outshape[2];
+            dstOp->out_shapes[0].Channel    = outshape[3];
+            dstOp->out_shapes[0].format     = BrixLab::TENSOR_FORMATE::NHWC;
+        }
+        const auto OpCode   = tfliteOpSet[tfliteOp->opcode_index]->builtin_code;
+        if(OpCode == tflite::BuiltinOperator_SPACE_TO_BATCH_ND){
+                dstOp->quantized_type       = BrixLab::QUANITIZED_TYPE::FLOAT32_REGULAR;
+                dstOp->op_type              = BrixLab::OP_type::SPACE_PERMUTES;
+                dstOp->perm_type            = BrixLab::DATA_PERMUTES_TYPE::Space_To_BatchND;
+        }else if(OpCode == tflite::BuiltinOperator_BATCH_TO_SPACE_ND){
+                dstOp->quantized_type       = BrixLab::QUANITIZED_TYPE::FLOAT32_REGULAR;
+                dstOp->op_type              = BrixLab::OP_type::SPACE_PERMUTES;
+                dstOp->perm_type            = BrixLab::DATA_PERMUTES_TYPE::Batch_To_SapceND;
+        }
+        {
+            const int block_index           = tfliteOp->inputs[1];
+            const auto& block_tensor        = tfliteTensors[block_index];
+            auto blockDataPtr               = (int32_t*)tfliteModelBuffer[block_tensor->buffer]->data.data();
+            dstOp->block_shape.resize(tfliteModelBuffer[block_tensor->buffer]->data.size() / 4);
+            for(unsigned int i = 0; i < dstOp->block_shape.size(); i++){
+                dstOp->block_shape[i]       = blockDataPtr[i];
+            }
+            
+            const int crop_index            = tfliteOp->inputs[2];
+            const auto& crop_Tensor         = tfliteTensors[crop_index];
+            auto cropDataPtr                = (int32_t*)tfliteModelBuffer[crop_Tensor->buffer]->data.data();
+            dstOp->crop_size.resize(tfliteModelBuffer[crop_Tensor->buffer]->data.size());
+            for(unsigned int i = 0; i < dstOp->crop_size.size(); i++){
+                dstOp->crop_size[i]         = cropDataPtr[i];
+            }
+        }
+    }
+    INSTANEC_OP_CONVERTER(SPaceToBatchND);
+
+    REGISTER_CONVERTER(SPaceToBatchND<float>, float, BuiltinOperator_SPACE_TO_BATCH_ND);
+    REGISTER_CONVERTER(SPaceToBatchND<uint8_t>, uint8_t, BuiltinOperator_SPACE_TO_BATCH_ND);
+
+    REGISTER_CONVERTER(SPaceToBatchND<float>, float, BuiltinOperator_BATCH_TO_SPACE_ND);
+    REGISTER_CONVERTER(SPaceToBatchND<uint8_t>, uint8_t, BuiltinOperator_BATCH_TO_SPACE_ND);
 
 } // namespace BrixLab

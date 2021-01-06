@@ -85,6 +85,11 @@ namespace BrixLab
     template<typename DType>
     strLayerNode<DType> OP_binary_layer_setup(const strParam<DType> &param);
 
+    template<typename DType>
+    void OP_spaceTransposed_inference_forward(strNodeParam<DType> *node, graphSetLink<DType> &g_net);
+    template<typename DType>
+    strLayerNode<DType> OP_spaceTransposed_layer_setup(const strParam<DType> &param);
+
     
     template<typename DType>
     class NetGraph{
@@ -93,12 +98,12 @@ namespace BrixLab
         int get_GraphinWidth() const;
         int get_GraphinHeight() const;
         strLayerNode<DType> *getGraphOutput();
-        NetGraph(const int &inH, const int &inW, const int &size, const std::string &tflite_path, const memory &input);
+        NetGraph(const int &inH, const int &inW, const int &size, const std::string &tflite_path);
         ~NetGraph();
 
         void network_predict();
         void make_netParamfromTflite(const std::string &tflite_file);
-        void make_graph(const NetT<DType>& g_net);
+        void make_graph(const NetT<DType>& g_net, DType *input, const dnnl::memory::format_tag &tag_type);
         NetT<DType> tfliteConvertGraphList();
         void printf_netGraph();
         private:

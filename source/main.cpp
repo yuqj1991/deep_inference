@@ -4,19 +4,32 @@
 #include <iostream>
 #include "logkit.hpp"
 using namespace BrixLab;
-int main(){
-    if(1){
+int main(int argc, const char *argv[]){
+    if(0){
         int inBatch     = 16;
-        int inChannel   = 3;
+        int inChannel   = 4;
         int inHeight    = 300;
         int inWidth     = 300;
         std::vector<float> inData(inBatch*inChannel*inHeight*inWidth);
-        float * data = inData.data();
-        BrixLab::Test_demoNet(data);
-        Test_groupConvolution();
+        std::generate(inData.begin(), inData.end(), []() {
+            static int i = 0;
+            return std::tanh(i++);
+        });
+        float * data    = inData.data();
+        int Test_Flages = 4;
+        printf("\n");
+        if(Test_Flages == 1){
+            BrixLab::Test_demoNet(data);
+        }else if(Test_Flages == 2){
+            BrixLab::Test_convolution();
+        }else if(Test_Flages == 3){
+            BrixLab::Test_groupConvolution();
+        }else if(Test_Flages == 4){
+            BrixLab::Test_Reshape_Permute();
+        }
     }else{
-        std::string img_file = "../../images/image_1.jpg";
-        Test_tflite("../../model/deeplabv3_257_mv_gpu.tflite", 257, 257, 3, img_file);
+        std::string img_file = argv[2];
+        Test_tflite(argv[1], std::stoi(argv[3]), std::stoi(argv[4]), 3, img_file);
     }
     return 0;
 }

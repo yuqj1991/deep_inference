@@ -3,7 +3,7 @@
 #Last_update    :2020.12.02
 
 CC              := g++
-SRC_INCLUDE     := -I ./include \
+SRC_INCLUDE     := -I ./include/ \
                    -I /usr/local/include
 LIB_DIR         := lib
 SRC_DIR         := ./source/
@@ -22,7 +22,8 @@ DEPS        += ${SOURCES:.cpp=.d}
 TARGET          := $(TARGE_DIR)/demo_inference
 
 CFLAGS = -g -Wall -std=c++11
-LFLAGS = -L ${LIB_DIR} -ldnnl
+LFLAGS = -L ${LIB_DIR} -ldnnl -lopencv_core -lopencv_imgproc -lopencv_highgui -lopencv_imgcodecs
+CFLAGS += -DUSE_DEBUG
 
 .PHONY:all clean
 all: ${TARGET}

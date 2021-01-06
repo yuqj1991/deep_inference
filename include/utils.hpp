@@ -79,6 +79,7 @@ namespace BrixLab
         SOFTMAX,
         REDUCTION,
         BINARY_OP,
+        SPACE_PERMUTES,
         //OP_TYPE_CONST,
     };
     enum activitionType{
@@ -124,6 +125,10 @@ namespace BrixLab
         ResizingNearest,
         ResizingBilinear,
     };
+    enum DATA_PERMUTES_TYPE{
+        Space_To_BatchND,
+        Batch_To_SapceND,
+    };
     enum ReductionType {
         ReductionType_SUM = 0,
         ReductionType_ASUM = 1,
@@ -156,10 +161,10 @@ namespace BrixLab
         BinaryOpOperation_EQUAL = 15,
         BinaryOpOperation_LESS_EQUAL = 16,
         BinaryOpOperation_FLOORMOD = 17,
-        BinaryOpOperation_MOD = 19,
-        BinaryOpOperation_ATAN2 = 20,
-        BinaryOpOperation_LOGICALOR = 21,
-        BinaryOpOperation_NOTEQUAL = 22,
+        BinaryOpOperation_MOD = 18,
+        BinaryOpOperation_ATAN2 = 19,
+        BinaryOpOperation_LOGICALOR = 20,
+        BinaryOpOperation_NOTEQUAL = 21,
         BinaryOpOperation_MIN = BinaryOpOperation_ADD,
         BinaryOpOperation_MAX = BinaryOpOperation_NOTEQUAL
     };
@@ -194,8 +199,6 @@ namespace BrixLab
         QUANITIZED_TYPE quantized_type;
         int32_t *quantized_bias;
         // (de)convolution params
-        bool relu;
-        bool relu6;
         int k_w;
         int k_h;
         PaddingType padMode;
@@ -260,6 +263,13 @@ namespace BrixLab
 
         //binary op_layer
         BinaryOpOperationType binary_type;
+        bool custumter_data_;
+        DType *binary_custum_data_;
+
+        //sapce to batch op_layer
+        DATA_PERMUTES_TYPE perm_type;
+        std::vector<int32_t> block_shape;
+        std::vector<int32_t> crop_size;
     };
 
     template<typename DType>
@@ -284,11 +294,11 @@ namespace BrixLab
         std::vector<TensorShape> out_shapes;
         OP_type op_type;
         std::vector<int>inputs;
-        std::vector<int>outputs;            
+        std::vector<int>outputs;          
         
         dnnl::memory::dims top_shape;
-        dnnl::memory layer_top_memory;
-        dnnl::memory::desc layer_top_md;
+        dnnl::memory top_memory;
+        dnnl::memory::desc top_md;
 
         dnnl::memory::dims bottom_shape;
         dnnl::memory::desc src_bottom_md;
@@ -301,6 +311,9 @@ namespace BrixLab
         dnnl::memory::dims bias_shape;
         dnnl::memory::desc src_bias_md;
         dnnl::memory src_bias_memory;
+        dnnl::post_ops p_ops;
+        dnnl:: primitive_attr p_attr;
+        Post_OPs_Param post_param;
         // (de)convolution layer & param
         int groups;
         int dilateX, dilateY;
@@ -311,7 +324,7 @@ namespace BrixLab
         dnnl::convolution_forward::primitive_desc conv_pdesc;
         dnnl::post_ops conv_ops;
         dnnl:: primitive_attr conv_attr;
-        Post_OPs_Param conv_post_op;
+        Post_OPs_Param conv_post_param;
         // deconvolution(transposed convolution) layer & param
         dnnl::memory::dims deconv_strides;
         dnnl::memory::dims deconv_paddingL, deconv_paddingR;
@@ -364,6 +377,8 @@ namespace BrixLab
         std::vector<dnnl::memory::desc> binary_md;
         std::vector<dnnl::memory> binary_memory;
         dnnl::binary::primitive_desc binary_pdesc;
+        bool Custumter_;
+        dnnl::memory binary_custum;
 
         // resampleing layer
         float adjust_scale;
@@ -374,6 +389,11 @@ namespace BrixLab
         dnnl:: primitive_attr fc_attr;
         Post_OPs_Param fc_post_op;
         dnnl::inner_product_forward::primitive_desc inner_pdesc;
+
+        //sapce to batch op_layer
+        DATA_PERMUTES_TYPE perm_type;
+        std::vector<int32_t> block_shape;
+        std::vector<int32_t> crop_size;
 
         // common layer
         std::unordered_map<int, dnnl::memory> op_args;
@@ -412,8 +432,8 @@ namespace BrixLab
                     this->top_shape[i]  = node.top_shape[i];
                 }
             }
-            this->layer_top_memory  = node.layer_top_memory;
-            this->layer_top_md      = node.layer_top_md;
+            this->top_memory  = node.top_memory;
+            this->top_md      = node.top_md;
 
             if(node.bottom_shape.size() > 0){
                 this->bottom_shape.resize(node.bottom_shape.size());
@@ -451,7 +471,7 @@ namespace BrixLab
             this->conv_paddingR     = node.conv_paddingR;
             this->conv_pdesc        = node.conv_pdesc;
             this->conv_ops          = node.conv_ops;
-            this->conv_post_op      = node.conv_post_op;
+            this->conv_post_param      = node.conv_post_param;
             this->conv_attr         = node.conv_attr;
 
             this->deconv_strides    = node.deconv_strides;
@@ -535,6 +555,18 @@ namespace BrixLab
             this->inner_pdesc       = node.inner_pdesc;
             this->op_args           = node.op_args;
             this->inference_forward = node.inference_forward;
+
+            this->perm_type         = node.perm_type;
+            if(node.block_shape.size() > 0){
+                this->block_shape.resize(node.block_shape.size());
+                this->block_shape   = node.block_shape;
+            }
+            if(node.crop_size.size() > 0){
+                this->crop_size.resize(node.crop_size.size());
+                this->crop_size     = node.crop_size;
+            }
+            this->Custumter_        = node.Custumter_;
+            this->binary_custum     = node.binary_custum;
             return *this;
         }
     };
@@ -550,17 +582,14 @@ namespace BrixLab
     
     template<typename DType>
     struct graphSetLink{
-        dnnl::memory input;
         strLayerNode<DType> *head;
         strLayerNode<DType> *current;
         strLayerNode<DType> *tail;
         int current_index;
         int graph_size;
 
-        graphSetLink(const int &size, const int &index, const dnnl::memory &temp_memory):
-                head(nullptr), current(nullptr),current_index(index), graph_size(size) {
-            input = temp_memory;
-        }
+        graphSetLink(const int &size, const int &index):
+                head(nullptr), current(nullptr),current_index(index), graph_size(size) {}
         strLayerNode<DType> *operator[](const int &index){
             strLayerNode<DType> *temp = nullptr;
             if(index > (graph_size - 1) || index < 0){
@@ -645,6 +674,28 @@ namespace BrixLab
     template<typename DType> int get_net_index_by_name(const std::vector<strParam<DType> > &layer_ops, const std::string &node_name);
     void print_dnnl_memory_shape(const dnnl::memory::dims &shape, const string &shape_name);
     int product_dnnl_memory_shape(const dnnl::memory::dims &shape);
+    template<typename DType> void PermuteMemory(const DType* src, DType* dst, 
+                                                        const dnnl::memory::dims& src_dims, 
+                                                        const dnnl::memory::dims& dst_dims,
+                                                        const int num_axes,
+                                                        const int* permute_order,
+                                                        const int* old_steps,
+                                                        const int* new_steps);
+    int dims_count(const dnnl::memory::dims& shape, const int& start, const int& end);
+
+    template<typename DType> void CropMemory(const DType* src, DType* dst, const dnnl::memory::dims& src_dims,
+                                                                            const dnnl::memory::dims& dst_dims,
+                                                                            const int& SH,
+                                                                            const int& EH,
+                                                                            const int& SW,
+                                                                            const int& EW);
+    template<typename DType> void fillMemory(const DType* src, DType* dst, const dnnl::memory::dims& src_dims,
+                                                                            const dnnl::memory::dims& dst_dims,
+                                                                            const int& SH,
+                                                                            const int& EH,
+                                                                            const int& SW,
+                                                                            const int& EW);
+    template<typename DType> void ReshapeExpandChannelMemory(const DType* src, DType* dst, const dnnl::memory::dims& dim_shape);
 } // namespace BrixLab
 
 #endif // #ifndef

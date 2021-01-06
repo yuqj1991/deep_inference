@@ -140,11 +140,13 @@ namespace BrixLab{
                 LOG(FATAL_ERROR)<<"not support binary op: "<<type;
                 break;
         }
+        return algo;
     }
 
     void read_from_dnnl_memory(void *handle, dnnl::memory &mem) {
         dnnl::engine eng    = mem.get_engine();
-        size_t size         = mem.get_desc().get_size();
+         size_t size         = mem.get_desc().get_size();
+        LOG(DEBUG_INFO)<<"size: "<<size;
 
         #if DNNL_WITH_SYCL
         bool is_cpu_sycl = (DNNL_CPU_RUNTIME == DNNL_RUNTIME_SYCL
@@ -311,6 +313,10 @@ namespace BrixLab{
                 op_name = std::string("OP_binary");
                 break;
             }
+            case OP_type::SPACE_PERMUTES:{
+                op_name = std::string("OP_spaceTransposed");
+                break;
+            }
             default:
                 LOG(FATAL_ERROR)<<"NO SUPPORT OPS: "<< type;
                 break;
@@ -319,6 +325,7 @@ namespace BrixLab{
     }
 
     void print_dnnl_memory_shape(const dnnl::memory::dims &shape, const string &shape_name){
+        #ifdef USE_DEBUG
         printf("%s: ", shape_name.c_str());
         for(unsigned int i = 0; i < shape.size(); i++){
             if(i < shape.size() - 1)
@@ -330,11 +337,12 @@ namespace BrixLab{
             
         }
         printf("\n");
+        #endif
     }
 
     template<typename DType> 
     int get_net_index_by_name(const std::vector<strParam<DType> > &layer_ops, const std::string &node_name){
-        int count   = 0;
+        int count   = -1;
         for(unsigned int i = 0; i < layer_ops.size(); i++){
             strParam<DType> New_OP = layer_ops[i];
             if(New_OP.node_name ==  node_name){
@@ -351,4 +359,153 @@ namespace BrixLab{
             size    *= shape[i];
         return size;
     }
+
+    template<typename DType>
+    void PermuteMemory(const DType* src, DType* dst, const dnnl::memory::dims& src_dims, 
+                                                    const dnnl::memory::dims& dst_dims,
+                                                    const int num_axes,
+                                                    const int* permute_order,
+                                                    const int* old_steps,
+                                                    const int* new_steps){
+        const int src_size                  = product_dnnl_memory_shape(src_dims);
+        const int dst_size                  = product_dnnl_memory_shape(dst_dims);
+        const int src_dims_size             = src_dims.size();
+        const int dst_dims_size             = dst_dims.size();
+        LOG_CHECK(src_size == dst_size)<<"CHECK MEMORY EQUAL ERROR";
+        LOG_CHECK(src_dims_size == dst_dims_size)<<"CHECK MEMORY EQUAL INPUTS ERROR";
+        for(int i = 0; i < src_size; i++){
+            int old_idx     = 0;
+            int idx         = i;
+            for (int j = 0; j < num_axes; ++j) {
+                int order   = permute_order[j];
+                old_idx     += (idx / new_steps[j]) * old_steps[order];
+                idx         %= new_steps[j];
+            }
+            dst[i]          = src[old_idx];
+        }
+        
+    }
+    template void PermuteMemory(const float* src, float* dst, const dnnl::memory::dims& src_dims, 
+                                                            const dnnl::memory::dims& dst_dims,
+                                                            const int num_axes,
+                                                            const int* permute_order,
+                                                            const int* old_steps,
+                                                            const int* new_steps);
+    template void PermuteMemory(const unsigned char* src, unsigned char* dst, const dnnl::memory::dims& src_dims, 
+                                                            const dnnl::memory::dims& dst_dims,
+                                                            const int num_axes,
+                                                            const int* permute_order,
+                                                            const int* old_steps,
+                                                            const int* new_steps);
+
+    int dims_count(const dnnl::memory::dims& shape, const int& start, const int& end){
+        int counts      = 1;
+        const int size  = shape.size() - 1;
+        LOG_CHECK((start <= end) &&(start >= 0) &&(end <= size))<<"CHECK INDEX ERROR";
+        for(int i = start; i <= end; i++){
+            counts  *= shape[i];
+        }
+        return counts;
+    }
+
+    template<typename DType> void CropMemory(const DType* src, DType* dst, const dnnl::memory::dims& src_dims,
+                                                                            const dnnl::memory::dims& dst_dims,
+                                                                            const int& SH,
+                                                                            const int& EH,
+                                                                            const int& SW,
+                                                                            const int& EW){
+        const int inB   = src_dims[0];
+        const int inC   = src_dims[1];
+        const int inH   = src_dims[2];
+        const int inW   = src_dims[3];
+        const int outB  = dst_dims[0];
+        const int outC  = dst_dims[1];
+        const int outH  = dst_dims[2];
+        const int outW  = dst_dims[3];
+        LOG_CHECK(inC == outC) << "CHECK CHANNEL ERROR";
+        LOG_CHECK(inB == outB) << "CHECK BATCH ERROR";
+        for(int b = 0; b < inB; b++){
+            for(int c = 0; c< inC; c++){
+                for(int h = SH; h < EH; h++){
+                    for(int w = SW; w < EW; w++){
+                        int idx     = b * inC * inH * inW + c * inH * inW + h * inW + w;
+                        int odx     = b * outC * outH * outW + c * outH * outW + (h - SH) * outW + (w-SW);
+                        dst[odx]    = src[idx];
+                    }
+                }
+            }
+        }
+    }
+    template void CropMemory(const float* src, float* dst, const dnnl::memory::dims& src_dims,
+                                                                            const dnnl::memory::dims& dst_dims,
+                                                                            const int& SH,
+                                                                            const int& EH,
+                                                                            const int& SW,
+                                                                            const int& EW);
+    template void CropMemory(const unsigned char* src, unsigned char* dst, const dnnl::memory::dims& src_dims,
+                                                                            const dnnl::memory::dims& dst_dims,
+                                                                            const int& SH,
+                                                                            const int& EH,
+                                                                            const int& SW,
+                                                                            const int& EW);
+    template<typename DType>
+    void fillMemory(const DType* src, DType* dst, const dnnl::memory::dims& src_dims,
+                                                                            const dnnl::memory::dims& dst_dims,
+                                                                            const int& SH,
+                                                                            const int& EH,
+                                                                            const int& SW,
+                                                                            const int& EW){
+        const int inB   = src_dims[0];
+        const int inC   = src_dims[1];
+        const int inH   = src_dims[2];
+        const int inW   = src_dims[3];
+        const int outB  = dst_dims[0];
+        const int outC  = dst_dims[1];
+        const int outH  = dst_dims[2];
+        const int outW  = dst_dims[3];
+        LOG_CHECK(inC == outC) << "CHECK CHANNEL ERROR";
+        LOG_CHECK(inB == outB) << "CHECK BATCH ERROR";
+        for(int b = 0; b < inB; b++){
+            for(int c = 0; c< inC; c++){
+                for(int h = SH; h < EH; h++){
+                    for(int w = SW; w < EW; w++){
+                        int idx     = b * inC * inH * inW + c * inH * inW + (h - SH) * inW + (w-SW);
+                        int odx     = b * outC * outH * outW + c * outH * outW + h * outW + w;
+                        dst[odx]    = src[idx];
+                    }
+                }
+            }
+        }
+    }
+    template void fillMemory(const float* src, float* dst, const dnnl::memory::dims& src_dims,
+                                                                            const dnnl::memory::dims& dst_dims,
+                                                                            const int& SH,
+                                                                            const int& EH,
+                                                                            const int& SW,
+                                                                            const int& EW);
+    template void fillMemory(const unsigned char* src, unsigned char* dst, const dnnl::memory::dims& src_dims,
+                                                                            const dnnl::memory::dims& dst_dims,
+                                                                            const int& SH,
+                                                                            const int& EH,
+                                                                            const int& SW,
+                                                                            const int& EW);
+    template<typename DType>
+    void ReshapeExpandChannelMemory(const DType* src, DType* dst, const dnnl::memory::dims& dim_shape){
+        const int inB   = dim_shape[0];
+        const int inC   = dim_shape[1];
+        const int inH   = dim_shape[2];
+        const int inW   = dim_shape[3];
+        for(int b = 0; b < inB; b++){
+            for(int c = 0; c< inC; c++){
+                for(int h = 0; h < inH; h++){
+                    for(int w = 0; w < inW; w++){
+                        int idx     = b * inC * inH * inW + c * inH * inW + h * inW + w;
+                        dst[idx]    = src[c];
+                    }
+                }
+            }
+        }
+    }
+    template void ReshapeExpandChannelMemory(const float* src, float* dst, const dnnl::memory::dims& dim_shape);
+    template void ReshapeExpandChannelMemory(const unsigned char* src, unsigned char* dst, const dnnl::memory::dims& dim_shape);
 }//BrixLab

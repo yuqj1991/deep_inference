@@ -4,50 +4,25 @@
 #include "utils.hpp"
 #include "schema_generated.h"
 #include "logkit.hpp"
+#include <fstream>
+#include <iostream>
+#include <algorithm>
+#include <iomanip>
+#include <sstream>
+#include <mutex>
+#include <stdio.h>
+#include <stdlib.h>
 
 typedef std::unique_ptr<tflite::QuantizationParametersT> tfliteQuanParam;
 namespace BrixLab
 {
-    static DataType get_tensorDataType_tflite(tflite::TensorType type){
-        switch (type) {
-            case tflite::TensorType_FLOAT32:
-                return DataType_DT_FLOAT;
-                break;
-            case tflite::TensorType_INT32:
-                return DataType_DT_INT32;
-                break;
-            case tflite::TensorType_UINT8:
-                return DataType_DT_UINT8;
-                break;
-            case tflite::TensorType_INT8:
-                return DataType_DT_INT8;
-                break;
-            default:
-                return DataType_DT_FLOAT;
-                break;
-        }
-    }
-
-    static bool needExtractInput(uint32_t opCode) {
-        #define NONEED(x) if (x == opCode) return false
-        NONEED(tflite::BuiltinOperator_CONV_2D);
-        NONEED(tflite::BuiltinOperator_DEPTHWISE_CONV_2D);
-        NONEED(tflite::BuiltinOperator_SPLIT);
-        NONEED(tflite::BuiltinOperator_CONCATENATION);
-        NONEED(tflite::BuiltinOperator_CONV_2D);
-        NONEED(tflite::BuiltinOperator_RESIZE_BILINEAR);
-        NONEED(tflite::BuiltinOperator_RESIZE_NEAREST_NEIGHBOR);
-        NONEED(tflite::BuiltinOperator_SOFTMAX);
-        return true;
-    }
-
     template<typename DType>
     bool convertDataFormatTflite(const DType* src, DType* dst, int KH, int KW, int CI, int CO) {
-        LOG_CHECK(KH > 0)/* constant-expression */<<"KH <= 0";
-        LOG_CHECK(KW > 0)<<"KW <= 0";
-        LOG_CHECK(CI > 0)<<"CI <= 0";
-        LOG_CHECK(CO > 0)<<"KO <= 0";
-        LOG_CHECK(src != nullptr)<< "src != nullptr";
+        if(KH <= 0) return false;
+        if(KW <= 0) return false;
+        if(CI <= 0) return false;
+        if(CO <= 0) return false;
+        if(src == nullptr) return false;
         // CO KH KW CI --> CO CI KH KW
         for (int oc = 0; oc < CO; ++oc) {
             for (int ic = 0; ic < CI; ++ic) {
@@ -114,6 +89,12 @@ namespace BrixLab
             fused_op.posts_op   = dnnl::algorithm::eltwise_relu;
             fused_op.alpha      = 0.f;
             fused_op.beta       = 0.f;
+            fused_op.scale      = -1.f;
+            break;
+        case Fused_kTfLiteActRelu:
+            fused_op.posts_op   = dnnl::algorithm::eltwise_relu;
+            fused_op.alpha      = 0.f;
+            fused_op.beta       = 0.f;
             fused_op.scale      = 1.f;
             break;
         case Fused_kTfLiteActRelu6:
@@ -136,11 +117,75 @@ namespace BrixLab
             fused_op.scale      = 1.f;
             break;
         default:
+            LOG(FATAL_ERROR)<<"Do Not Support other ops: " << fused_activation;
             break;
         }
 
         return fused_op;
     }
+
+
+    inline std::string GetCurrentTimeForFileName()
+    {
+        auto time = std::time(nullptr);
+        std::stringstream ss;
+        ss << std::put_time(std::localtime(&time), "%F_%T"); // ISO 8601 without timezone information.
+        auto s = ss.str();
+        std::replace(s.begin(), s.end(), ':', '-');
+        return s;
+    }
+
+    inline void dump_data_to_file(const float* data, uint32_t size, const std::string name, const dnnl::memory::dims dims){
+        static std::mutex lock;
+        std::lock_guard<std::mutex> lg(lock);
+        FILE *fp;
+        static const std::string filename = GetCurrentTimeForFileName()+".dump";
+        fp = fopen(filename.data(), "wt+");
+        if(fp == nullptr){
+            LOG(FATAL_ERROR) << "cannot open file " << filename;
+        }
+        uint32_t sz = name.size();
+        fwrite(&sz, 1, 4, fp);
+        fwrite(name.data(), 1, sz, fp);
+        sz = dims.size();
+        fwrite(&sz, 1, 4, fp);
+        for(size_t i=0; i<dims.size(); i++){
+            uint32_t dim = dims[i];
+            fwrite(&dim, 1, 4, fp);
+        }
+        size *= sizeof(*data);
+        fwrite(&size, 1, 4, fp);
+        fwrite(data, 1, size, fp);
+        fclose(fp);
+    }
+
+    inline void dump_data_to_file_c(const float* data, uint32_t size, const std::string name, const dnnl::memory::dims dims){
+        FILE *fp;
+        static const std::string filename = GetCurrentTimeForFileName() + ".dump";
+        fp = fopen(filename.data(), "a");
+        if(fp == nullptr){
+            LOG(FATAL_ERROR) << "cannot open file " << filename;
+        }
+        const int inB   = dims[0];
+        const int inC   = dims[1];
+        const int inH   = dims[2];
+        const int inW   = dims[3];
+        fprintf(fp, "%s\n", name.c_str());
+
+        for(int b = 0; b < inB; b++){
+            for(int c = 0; c < inC; c++){
+                for(int h = 0; h < inH; h++){
+                    for(int w = 0; w < inW; w++){
+                        fprintf(fp, "%.1f, ", data[b * inC * inH * inW + c * inH * inW + h * inW + w]);
+                    }
+                    fprintf(fp, "\n");
+                }
+                fprintf(fp, "\n");
+            }
+            fprintf(fp, "\n");
+        }
+        fclose(fp);
+    }
 } // namespace BrixLab
 
-#endif
+#endif // BRIXLAB_TFLITE_HELPS_

@@ -97,7 +97,9 @@ class LogMessage{
             data = new (&thread_msg_data) LogMessageData;
             std::string loglevel = get_log_info(level);
             stream().fill('0');
+            #ifdef USE_DEBUG
             stream()<<"["<<loglevel<<"]"<< "["<<filename<<"]["<<function<<"]["<<line<<"]: ";
+            #endif
             data->num_char_to_log_ = 0;
             data->has_been_flushed_ =false;
 
@@ -145,8 +147,10 @@ class LogMessage{
             fwrite(data->message_text_, data->num_char_to_log_, 1, stderr);
             exit(0);
         }else if(level == DEBUG_INFO){
+            #ifdef USE_DEBUG
             fprintf(stderr, "\033[0;33m");
             fwrite(data->message_text_, data->num_char_to_log_, 1, stderr);
+            #endif
         }
     }
     private:
@@ -161,7 +165,7 @@ class LogMessage{
 
 #define COMPACT_LOG_DEBUG_INFO LogMessage(__FILE__, __FUNCTION__,__LINE__, DEBUG_INFO)
 #define COMPACT_LOG_FATAL_ERROR LogMessage(__FILE__, __FUNCTION__,__LINE__, FATAL_ERROR)
-#define LOG(mode)  COMPACT_LOG_##mode.stream()
+#define LOG(mode) COMPACT_LOG_##mode.stream() 
 
 #define LOG_CHECK(expression)\
         if(!(expression))\
