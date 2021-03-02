@@ -179,6 +179,7 @@ namespace BrixLab
         print_dnnl_memory_shape(node.node_param.top_shape, "top_shape");
             
         if(dilate){
+            LOG(DEBUG_INFO)<<"fused_ops: "<<param.fused_ops;
             memory::dims conv_dilates = {node.node_param.dilateX, node.node_param.dilateX};
             if(node.node_param.hasBias){
                 auto convolution_desc = convolution_forward::desc(prop_kind::forward_inference,
@@ -214,6 +215,7 @@ namespace BrixLab
                 }
             }    
         }else{
+            LOG(DEBUG_INFO)<<"fused_ops: "<<param.fused_ops;
             if(node.node_param.hasBias){
                 auto convolution_desc = convolution_forward::desc(prop_kind::forward_inference,
                                         algorithm::convolution_direct, node.node_param.src_bottom_md, node.node_param.src_weights_md,
@@ -242,6 +244,7 @@ namespace BrixLab
                                                     node.node_param.conv_post_param.alpha,
                                                     node.node_param.conv_post_param.beta);
                     node.node_param.conv_attr.set_post_ops(node.node_param.conv_ops);
+                    LOG(DEBUG_INFO)<<"fused_ops: "<<param.fused_ops;
                     node.node_param.conv_pdesc = convolution_forward::primitive_desc(convolution_desc, node.node_param.conv_attr, BrixLab::graph_eng);
                 }else{
                     node.node_param.conv_pdesc = convolution_forward::primitive_desc(convolution_desc, BrixLab::graph_eng);
@@ -250,6 +253,7 @@ namespace BrixLab
         }
 
         if (node.node_param.conv_pdesc.weights_desc() != node.node_param.src_weights_memory.get_desc()) {
+            LOG(DEBUG_INFO)<<"NHWC REORDER EXCETUE";
             auto temp_memory = memory(node.node_param.conv_pdesc.weights_desc(), BrixLab::graph_eng);
             reorder(node.node_param.src_weights_memory, temp_memory)
                     .execute(BrixLab::graph_stream, node.node_param.src_weights_memory, temp_memory);
@@ -1424,6 +1428,7 @@ namespace BrixLab
     template<typename DType>
     void NetGraph<DType>::printf_netGraph(){
         LOG_CHECK(graph_state.graph_size>0)<<"graph_state should has layer_nodes";
+        LOG(DEBUG_INFO)<<"graph_size: "<<graph_state.graph_size;
         strLayerNode<DType> *layer_node    = graph_state.head;  
         while(layer_node != nullptr){
             OP_type type        = layer_node->node_param.op_type;
@@ -1485,6 +1490,8 @@ namespace BrixLab
                 input_OpT.in_shapes[0].Channel     = inputTensor->shape[3];
                 input_OpT.in_shapes[0].Height      = inputTensor->shape[1];
                 input_OpT.in_shapes[0].Width       = inputTensor->shape[2];
+                LOG(DEBUG_INFO)<<"batch: "<<input_OpT.in_shapes[0].Batch<<",channel: "<<input_OpT.in_shapes[0].Channel
+                                <<",height: "<<input_OpT.in_shapes[0].Height<<",width: "<<input_OpT.in_shapes[0].Width;
                 g_net.layer_ops.push_back(input_OpT);
             }
             // set output names
